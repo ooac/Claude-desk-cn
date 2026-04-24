@@ -104,6 +104,39 @@ def patch_language_whitelist(app: Path) -> Path:
     raise SystemExit("Could not patch language whitelist. Claude's bundle format may have changed.")
 
 
+def patch_hardcoded_frontend_strings(app: Path) -> None:
+    assets_dir = app / FRONTEND_ASSETS_REL
+    replacements = {
+        '"New task"': '"新建任务"',
+        '"Projects"': '"项目"',
+        '"Scheduled"': '"计划任务"',
+        '"Customize"': '"自定义"',
+        '"Drag to pin"': '"拖到此处固定"',
+        '"Drop here"': '"拖到此处"',
+        '"Let go"': '"松开"',
+        '"Recents"': '"最近使用"',
+        '"View all"': '"查看全部"',
+    }
+    patched_files = 0
+    patched_strings = 0
+
+    for path in sorted(assets_dir.glob("*.js")):
+        text = path.read_text(encoding="utf-8")
+        patched = text
+        count = 0
+        for source, target in replacements.items():
+            occurrences = patched.count(source)
+            if occurrences:
+                patched = patched.replace(source, target)
+                count += occurrences
+        if patched != text:
+            path.write_text(patched, encoding="utf-8")
+            patched_files += 1
+            patched_strings += count
+
+    print(f"Patched hardcoded frontend strings: {patched_strings} replacements in {patched_files} files")
+
+
 def merge_frontend_locale(app: Path) -> tuple[int, int, int]:
     source = app / FRONTEND_I18N_REL / "en-US.json"
     target = app / FRONTEND_I18N_REL / "zh-CN.json"
@@ -238,6 +271,7 @@ def main() -> int:
 
     copy_app(args.app, patched_app)
     patch_language_whitelist(patched_app)
+    patch_hardcoded_frontend_strings(patched_app)
     merge_frontend_locale(patched_app)
     install_desktop_locale(patched_app)
     install_statsig_locale(patched_app)
