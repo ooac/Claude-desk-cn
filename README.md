@@ -67,13 +67,16 @@ chmod +x install.command
 - 合并当前 Claude 版本的 `en-US.json` 和随包中文翻译：
   当前版本已有中文翻译的 key 会变中文，新版本新增但本包没有的 key 会保留英文，避免应用缺字段。
 - 写入 `~/Library/Application Support/Claude/config.json`，设置 `"locale": "zh-CN"`。
+- 对修改后的 Claude.app 及其内部 app/framework/原生二进制做一致的本机 ad-hoc 重签名，并清除 `com.apple.quarantine` 隔离属性。
 - 重新启动 Claude。
 
 ## 注意
 
 Claude Desktop 更新后可能会覆盖补丁，需要重新运行 `install.command`。
 
-如果打开后 macOS 提示无法验证开发者或应用损坏，不要重新签名 Claude.app。这个补丁保留原 app 的签名身份，只修改资源文件；重新签名可能触发 Claude 自身的安装校验。
+如果打开后 macOS 提示无法验证开发者或应用损坏，通常是因为 Claude Desktop 更新后，补丁修改资源文件导致原始签名失效。新版脚本会自动执行本机 ad-hoc 重签名、保留原 app 的 entitlements，并确保内部 app/framework 使用一致签名；如果你已经用旧版脚本打过补丁且遇到 `virtualization_entitlement_missing` / `Claude 的安装似乎已损坏`，请先恢复备份或重新安装官方 Claude.app，再重新运行 `install.command`。
+
+不要只手动运行单条 `codesign --deep` 命令修复当前应用。Claude.app 内部还有 Electron Framework、Helper app、`.node` 原生模块和动态库，单条命令容易造成主程序和内部 framework 的 Team ID 不一致，启动时会出现 `mapping process and mapped file ... have different Team IDs`。请重新运行 `install.command`，让脚本按从内到外的顺序重签。
 
 ## 卸载 / 恢复
 

@@ -19,6 +19,7 @@ import argparse
 import datetime as dt
 import json
 import os
+import plistlib
 import re
 import shutil
 import subprocess
@@ -67,6 +68,35 @@ def save_json(path: Path, data: Any) -> None:
 def require_file(path: Path) -> None:
     if not path.exists():
         raise SystemExit(f"Missing required file: {path}")
+
+
+def read_entitlements(path: Path) -> str:
+    return run(["codesign", "-d", "--entitlements", "-", str(path)], check=False).stdout
+
+
+def load_entitlements(path: Path) -> dict[str, Any]:
+    result = subprocess.run(
+        ["codesign", "-d", "--entitlements", ":-", str(path)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return {}
+    try:
+        data = plistlib.loads(result.stdout)
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def require_virtualization_entitlement(app: Path) -> None:
+    entitlements = read_entitlements(app)
+    if "com.apple.security.virtualization" not in entitlements:
+        raise SystemExit(
+            "Claude.app does not have the required virtualization entitlement. "
+            "Restore or reinstall the official Claude.app first, then run this patcher again."
+        )
 
 
 def quit_claude() -> None:
@@ -192,6 +222,75 @@ def install_statsig_locale(app: Path) -> None:
     print("Installed statsig zh-CN resource")
 
 
+def sign_path(path: Path, entitlements_dir: Path) -> None:
+    entitlements = load_entitlements(path)
+    if entitlements:
+        # Ad-hoc signatures do not have a real Team ID. Under hardened runtime,
+        # Electron's main process otherwise fails library validation when it loads
+        # bundled frameworks, even when the whole bundle is signed consistently.
+        entitlements["com.apple.security.cs.disable-library-validation"] = True
+
+    cmd = [
+        "codesign",
+        "--force",
+        "--sign",
+        "-",
+        "--options",
+        "runtime",
+        "--preserve-metadata=identifier,flags",
+    ]
+    if entitlements:
+        entitlement_path = entitlements_dir / f"{abs(hash(path.as_posix()))}.plist"
+        entitlement_path.write_bytes(plistlib.dumps(entitlements, fmt=plistlib.FMT_XML))
+        cmd.extend(["--entitlements", str(entitlement_path)])
+    cmd.append(str(path))
+
+    result = run(cmd, check=False)
+    if result.returncode != 0:
+        print(result.stdout, end="")
+        raise SystemExit(f"Failed to re-sign: {path}")
+
+
+def is_signable_file(path: Path) -> bool:
+    if path.is_symlink() or not path.is_file():
+        return False
+    if path.suffix in {".dylib", ".node", ".so"}:
+        return True
+    return os.access(path, os.X_OK)
+
+
+def resign_app(app: Path) -> None:
+    print("Re-signing patched app with local ad-hoc signature, preserving entitlements")
+    contents = app / "Contents"
+    entitlements_dir = Path(tempfile.mkdtemp(prefix="claude-zh-cn-entitlements."))
+    bundle_targets: list[Path] = []
+    file_targets: list[Path] = []
+
+    for root, dirs, files in os.walk(contents):
+        root_path = Path(root)
+        for dirname in dirs:
+            path = root_path / dirname
+            if path.suffix in {".app", ".framework"}:
+                bundle_targets.append(path)
+        for filename in files:
+            path = root_path / filename
+            if is_signable_file(path):
+                file_targets.append(path)
+
+    # Sign nested Mach-O files first, then their containing bundles, then the outer app.
+    for path in sorted(file_targets, key=lambda p: len(p.parts), reverse=True):
+        sign_path(path, entitlements_dir)
+    for path in sorted(bundle_targets, key=lambda p: len(p.parts), reverse=True):
+        sign_path(path, entitlements_dir)
+    sign_path(app, entitlements_dir)
+
+
+def clear_quarantine(app: Path) -> None:
+    result = run(["xattr", "-dr", "com.apple.quarantine", str(app)], check=False)
+    if result.returncode == 0:
+        print("Cleared Gatekeeper quarantine attribute")
+
+
 def set_user_locale(user_home: Path) -> None:
     config = user_home / "Library/Application Support/Claude/config.json"
     config.parent.mkdir(parents=True, exist_ok=True)
@@ -235,6 +334,19 @@ def verify(app: Path) -> None:
     chinese = sum(1 for v in values if re.search(r"[\u4e00-\u9fff]", v))
     print(f"Verified frontend zh-CN JSON: {chinese}/{len(values)} strings contain Chinese")
 
+    verify_result = run(["codesign", "--verify", "--deep", "--strict", "--verbose=2", str(app)], check=False)
+    if verify_result.returncode == 0:
+        print("Verified app signature")
+    else:
+        print("App signature verification failed:")
+        print(verify_result.stdout, end="")
+
+    entitlements = read_entitlements(app)
+    if "com.apple.security.virtualization" in entitlements:
+        print("Verified virtualization entitlement")
+    else:
+        print("Warning: virtualization entitlement is missing")
+
     result = run(["codesign", "-dv", str(app)], check=False).stdout
     for line in result.splitlines():
         if line.startswith("TeamIdentifier="):
@@ -254,6 +366,7 @@ def main() -> int:
     require_file(LOCALIZABLE_STRINGS)
     if not args.app.exists():
         raise SystemExit(f"Claude.app not found: {args.app}")
+    require_virtualization_entitlement(args.app)
 
     try:
         in_applications = args.app.resolve().as_posix().startswith("/Applications/")
@@ -275,6 +388,8 @@ def main() -> int:
     merge_frontend_locale(patched_app)
     install_desktop_locale(patched_app)
     install_statsig_locale(patched_app)
+    resign_app(patched_app)
+    clear_quarantine(patched_app)
     if args.dry_run:
         print(f"[dry-run] Would set Claude config locale under: {args.user_home}")
     else:
