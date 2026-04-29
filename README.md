@@ -2,6 +2,8 @@
 
 一个用于 macOS 版 Claude Desktop 的中文界面补丁。把本项目下载到本地后，双击 `install.command`，即可给 Claude Desktop 添加 `中文（中国）` 语言选项，并安装中文界面资源。
 
+本汉化方案仅支持使用 API 的方式。
+
 ## 功能特点
 
 - 一键安装 Claude Desktop 中文界面资源。
