@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 One-click zh-CN patcher for Claude Desktop on macOS.
 
@@ -17,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import json
 import os
 import plistlib
@@ -327,10 +329,6 @@ def patch_hardcoded_desktop_strings(app: Path) -> None:
         "Write Main Process Heap Snapshot": "写入主进程堆快照",
         "Record Memory Trace (auto-stop)": "记录内存跟踪（自动）",
     }
-    role_replacements = {
-        b'{role:"minimize"}': b'{label:"\xe6\x9c\x80\xe5\xb0\x8f\xe5\x8c\x96",role:"minimize"}',
-        b'{role:"front"}': b'{label:"\xe5\x85\xa8\xe9\x83\xa8\xe7\xbd\xae\xe4\xba\x8e\xe9\xa1\xb6\xe5\xb1\x82",role:"front"}',
-    }
     data = asar.read_bytes()
     patched = data
     patched_strings = 0
@@ -342,16 +340,43 @@ def patch_hardcoded_desktop_strings(app: Path) -> None:
             patched = patched.replace(source_bytes, pad_utf8(source, target))
             patched_strings += occurrences
 
-    for source, target in role_replacements.items():
-        occurrences = patched.count(source)
-        if occurrences:
-            patched = patched.replace(source, target)
-            patched_strings += occurrences
-
     if patched != data:
         asar.write_bytes(patched)
 
     print(f"Patched hardcoded desktop strings: {patched_strings} replacements in app.asar")
+
+
+def update_asar_integrity(app: Path) -> None:
+    asar = app / DESKTOP_RESOURCES_REL / "app.asar"
+    if not asar.exists():
+        print(f"Skipping ASAR integrity update: {asar} not found")
+        return
+
+    digest = hashlib.sha256(asar.read_bytes()).hexdigest()
+    updated = 0
+    for plist_path in (app / "Contents").rglob("Info.plist"):
+        try:
+            with plist_path.open("rb") as f:
+                data = plistlib.load(f)
+        except Exception:
+            continue
+        if not isinstance(data, dict):
+            continue
+        integrity = data.get("ElectronAsarIntegrity")
+        if not isinstance(integrity, dict):
+            continue
+        entry = integrity.get("Resources/app.asar")
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("hash") == digest:
+            continue
+        entry["algorithm"] = "SHA256"
+        entry["hash"] = digest
+        with plist_path.open("wb") as f:
+            plistlib.dump(data, f, fmt=plistlib.FMT_XML, sort_keys=False)
+        updated += 1
+
+    print(f"Updated Electron ASAR integrity hash in {updated} Info.plist files")
 
 
 def merge_frontend_locale(app: Path) -> tuple[int, int, int]:
@@ -673,7 +698,6 @@ def main() -> int:
     copy_app(args.app, patched_app)
     patch_language_whitelist(patched_app)
     patch_hardcoded_frontend_strings(patched_app)
-    patch_hardcoded_desktop_strings(patched_app)
     merge_frontend_locale(patched_app)
     install_desktop_locale(patched_app)
     install_statsig_locale(patched_app)
