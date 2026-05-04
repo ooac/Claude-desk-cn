@@ -138,11 +138,16 @@ def patch_hardcoded_frontend_strings(app: Path) -> None:
     assets_dir = app / FRONTEND_ASSETS_REL
     replacements = {
         '"New task"': '"新建任务"',
+        '"New session"': '"新会话"',
         '"Drag to pin"': '"拖到此处固定"',
         '"Drop here"': '"拖到此处"',
         '"Let go"': '"松开"',
         '"Recents"': '"最近使用"',
         '"View all"': '"查看全部"',
+        '"Scheduled"': '"定时任务"',
+        '"Pinned"': '"已固定"',
+        '"What’s up next?"': '"接下来做什么？"',
+        '"Let\'s knock something off your list"': '"先把清单上的一件事做完"',
         'label:"Projects"': 'label:"项目"',
         'label:"Scheduled"': 'label:"计划任务"',
         'label:"Customize"': 'label:"自定义"',
