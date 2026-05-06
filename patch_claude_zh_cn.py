@@ -293,6 +293,51 @@ def patch_hardcoded_frontend_strings(app: Path) -> None:
         'label:"Headers helper script"': 'label:"请求头辅助脚本"',
         'label:"Helper cache TTL (sec)"': 'label:"辅助缓存 TTL（秒）"',
         'placeholder:"Absolute path"': 'placeholder:"绝对路径"',
+        '["active","Active"]': '["active","活跃"]',
+        '["archived","Archived"]': '["archived","已归档"]',
+        '["all","All"]': '["all","全部"]',
+        'jl="Local"': 'jl="本地"',
+        'Cl="Cloud"': 'Cl="云端"',
+        'Ml="Remote Control"': 'Ml="远程控制"',
+        'Il="All"': 'Il="全部"',
+        '["alpha","Alphabetically"]': '["alpha","按字母"]',
+        '["created","Created time"]': '["created","创建时间"]',
+        '["recency","Recency"]': '["recency","最近使用"]',
+        '["1","1d"]': '["1","1天"]',
+        '["3","3d"]': '["3","3天"]',
+        '["7","7d"]': '["7","7天"]',
+        '["30","30d"]': '["30","30天"]',
+        '["0","All"]': '["0","全部"]',
+        '["date","Date"]': '["date","日期"]',
+        '["project","Project"]': '["project","项目"]',
+        '["state","State"]': '["state","状态"]',
+        '["environment","Environment"]': '["environment","环境"]',
+        '["none","None"]': '["none","无"]',
+        'label:"Status"': 'label:"状态"',
+        'label:"Environment"': 'label:"环境"',
+        'label:"Last activity"': 'label:"上次活动"',
+        'label:"Group by"': 'label:"分组方式"',
+        'label:"Sort by"': 'label:"排序方式"',
+        'children:"Project"': 'children:"项目"',
+        'children:"All projects"': 'children:"全部项目"',
+        'children:"Clear filters"': 'children:"清除筛选"',
+        '0===e.length?"All":': '0===e.length?"全部":',
+        '`${e.length} selected`': '`${e.length} 项已选`',
+        'children:"Batch archive…"': 'children:"批量归档…"',
+        'children:"Batch delete…"': 'children:"批量删除…"',
+        'children:"Sign out"': 'children:"退出登录"',
+        'defaultMessage:"Theme"': 'defaultMessage:"主题"',
+        'defaultMessage:"Match system"': 'defaultMessage:"跟随系统"',
+        'defaultMessage:"Font"': 'defaultMessage:"字体"',
+        'defaultMessage:"Anthropic Sans"': 'defaultMessage:"Anthropic 无衬线体"',
+        'defaultMessage:"Effort"': 'defaultMessage:"强度"',
+        'defaultMessage:"Transcript view"': 'defaultMessage:"思考模式"',
+        'defaultMessage:"Transcript view mode"': 'defaultMessage:"思考模式"',
+        'defaultMessage:"Connectors have moved to <link>Customize</link>."': 'defaultMessage:"连接器已移至<link>自定义</link>。"',
+        'defaultMessage:"Skills have moved to <link>Customize</link>."': 'defaultMessage:"技能已移至<link>自定义</link>。"',
+        'defaultMessage:"Generate code, documents, and designs in a dedicated window alongside your conversation."': 'defaultMessage:"在对话旁的专用窗口中生成代码、文档和设计。"',
+        'defaultMessage:"Get notified when Claude has finished a response. Useful for long-running tasks."': 'defaultMessage:"Claude 完成响应后通知你，适合长时间运行的任务。"',
+        'defaultMessage:"Artifacts"': 'defaultMessage:"创作物"',
         '"Scheduled"': '"定时任务"',
         '"Pinned"': '"已固定"',
         '"What’s up next?"': '"接下来做什么？"',
@@ -350,7 +395,7 @@ def read_asar_header(data: bytes, path: Path) -> tuple[int, str, dict[str, Any]]
     return header_size, header_string, header
 
 
-def encode_asar_header(header_string: str, expected_header_size: int) -> bytes:
+def encode_asar_header(header_string: str, expected_header_size: int | None = None) -> bytes:
     header_bytes = header_string.encode("utf-8")
     header_payload_size = align4(4 + len(header_bytes))
     header_pickle = (
@@ -359,9 +404,9 @@ def encode_asar_header(header_string: str, expected_header_size: int) -> bytes:
         + header_bytes
         + b"\0" * (header_payload_size - 4 - len(header_bytes))
     )
-    if len(header_pickle) != expected_header_size:
+    if expected_header_size is not None and len(header_pickle) != expected_header_size:
         raise SystemExit("Internal patch error: app.asar header length changed.")
-    return struct.pack("<I", 4) + struct.pack("<I", expected_header_size) + header_pickle
+    return struct.pack("<I", 4) + struct.pack("<I", len(header_pickle)) + header_pickle
 
 
 def get_asar_file_entry(header: dict[str, Any], file_path: str) -> dict[str, Any]:
@@ -415,7 +460,7 @@ def update_electron_asar_integrity(app: Path, header_string: str) -> None:
     os.replace(tmp, info_plist)
 
 
-def patch_custom3p_model_validation(app: Path) -> None:
+def patch_custom3p_model_validation(app: Path) -> bool:
     path = app / APP_ASAR_REL
     require_file(path)
 
@@ -439,9 +484,11 @@ def patch_custom3p_model_validation(app: Path) -> None:
     content = bytes(data[content_offset:content_end])
     count = content.count(anchor)
     if count != 1:
-        raise SystemExit(
-            "Could not patch custom 3P model validation. Claude bundle format may have changed."
+        print(
+            "Warning: Could not patch custom 3P model validation. "
+            "Claude bundle format may have changed. Continue without this optional patch."
         )
+        return False
 
     patched_content = content.replace(anchor, patched, 1)
     if len(patched_content) != len(content):
@@ -456,6 +503,83 @@ def patch_custom3p_model_validation(app: Path) -> None:
     path.write_bytes(data)
     update_electron_asar_integrity(app, updated_header_string)
     print("Patched custom 3P model-name validation in app.asar")
+    return True
+
+
+def walk_asar_file_entries(header: dict[str, Any]) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+
+    def walk(node: dict[str, Any]) -> None:
+        files = node.get("files")
+        if not isinstance(files, dict):
+            return
+        for child in files.values():
+            if not isinstance(child, dict):
+                continue
+            if "files" in child:
+                walk(child)
+            elif "offset" in child and "size" in child:
+                entries.append(child)
+
+    walk(header)
+    return entries
+
+
+def patch_asar_file_with_replacements(app: Path, file_path: str, replacements: dict[str, str]) -> int:
+    path = app / APP_ASAR_REL
+    require_file(path)
+    data = path.read_bytes()
+    header_size, _header_string, header = read_asar_header(data, path)
+    entry = get_asar_file_entry(header, file_path)
+    content_offset = 8 + header_size + int(entry["offset"])
+    content_size = int(entry["size"])
+    content_end = content_offset + content_size
+    if content_offset < 0 or content_end > len(data):
+        raise SystemExit(f"Unsupported app.asar file bounds for {file_path}.")
+
+    content = data[content_offset:content_end].decode("utf-8")
+    patched = content
+    count = 0
+    for source, target in replacements.items():
+        occurrences = patched.count(source)
+        if occurrences:
+            patched = patched.replace(source, target)
+            count += occurrences
+
+    if patched == content:
+        return 0
+
+    patched_bytes = patched.encode("utf-8")
+    delta = len(patched_bytes) - content_size
+    original_offset = int(entry["offset"])
+    for item in walk_asar_file_entries(header):
+        item_offset = int(item["offset"])
+        if item is entry:
+            item["size"] = len(patched_bytes)
+            item["integrity"] = calculate_file_integrity(patched_bytes)
+        elif item_offset > original_offset:
+            item["offset"] = str(item_offset + delta)
+
+    updated_header_string = json.dumps(header, ensure_ascii=False, separators=(",", ":"))
+    updated_header = encode_asar_header(updated_header_string)
+    body = data[8 + header_size :]
+    body = body[:original_offset] + patched_bytes + body[original_offset + content_size :]
+    path.write_bytes(updated_header + body)
+    update_electron_asar_integrity(app, updated_header_string)
+    return count
+
+
+def patch_native_menu_role_labels(app: Path) -> None:
+    replacements = {
+        '{role:"services"}': '{label:"服务",role:"services"}',
+        '{role:"hide"}': '{label:"隐藏 Claude",role:"hide"}',
+        '{role:"hideOthers"}': '{label:"隐藏其他",role:"hideOthers"}',
+        '{role:"unhide"}': '{label:"全部显示",role:"unhide"}',
+        '{role:"minimize"}': '{label:"最小化",role:"minimize"}',
+        '{role:"front"}': '{label:"全部置于前面",role:"front"}',
+    }
+    count = patch_asar_file_with_replacements(app, ASAR_PATCH_TARGET, replacements)
+    print(f"Patched native menu role labels in app.asar: {count} replacements")
 
 
 def merge_frontend_locale(app: Path) -> tuple[int, int, int]:
@@ -582,8 +706,7 @@ def clear_quarantine(app: Path) -> None:
         print("Cleared Gatekeeper quarantine attribute")
 
 
-def set_user_locale(user_home: Path) -> None:
-    config = user_home / "Library/Application Support/Claude/config.json"
+def set_locale_config(config: Path) -> None:
     config.parent.mkdir(parents=True, exist_ok=True)
     data: dict[str, Any] = {}
     if config.exists():
@@ -601,6 +724,42 @@ def set_user_locale(user_home: Path) -> None:
     if sudo_uid and sudo_gid:
         os.chown(config, int(sudo_uid), int(sudo_gid))
     print(f"Set Claude config locale: {config}")
+
+
+def set_app_language_defaults(user_home: Path) -> None:
+    user = os.environ.get("SUDO_USER")
+    if not user or user == "root":
+        user = user_home.name
+
+    defaults_prefix: list[str] = []
+    if os.geteuid() == 0 and user and user != "root":
+        defaults_prefix = ["sudo", "-u", user]
+
+    domain = "com.anthropic.claudefordesktop"
+    run(
+        defaults_prefix
+        + [
+            "defaults",
+            "write",
+            domain,
+            "AppleLanguages",
+            "-array",
+            "zh-Hans",
+            "zh-Hans-CN",
+            "zh-CN",
+            "en-CN",
+            "en-US",
+        ],
+        check=False,
+    )
+    run(defaults_prefix + ["defaults", "write", domain, "AppleLocale", "-string", "zh_CN"], check=False)
+    print(f"Set Claude app language defaults for user: {user}")
+
+
+def set_user_locale(user_home: Path) -> None:
+    for support_dir in ["Claude", "Claude-3p"]:
+        set_locale_config(user_home / f"Library/Application Support/{support_dir}/config.json")
+    set_app_language_defaults(user_home)
 
 
 def backup_and_replace(original: Path, patched: Path, dry_run: bool) -> Path:
@@ -676,7 +835,8 @@ def main() -> int:
     copy_app(args.app, patched_app)
     patch_language_whitelist(patched_app)
     patch_hardcoded_frontend_strings(patched_app)
-    patch_custom3p_model_validation(patched_app)
+    model_validation_patched = patch_custom3p_model_validation(patched_app)
+    patch_native_menu_role_labels(patched_app)
     merge_frontend_locale(patched_app)
     install_desktop_locale(patched_app)
     install_statsig_locale(patched_app)
@@ -694,6 +854,8 @@ def main() -> int:
         if args.launch:
             run(["open", "-a", str(args.app)], check=False)
 
+    if not model_validation_patched:
+        print("Note: optional 3P model-name validation patch was skipped for this Claude version.")
     print("Done. Select Language -> 中文（中国） in Claude if it is not already selected.")
     return 0
 
