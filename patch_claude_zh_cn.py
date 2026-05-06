@@ -18,12 +18,14 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import json
 import os
 import plistlib
 import re
 import shutil
 import subprocess
+import struct
 import sys
 import tempfile
 from pathlib import Path
@@ -39,9 +41,12 @@ FRONTEND_TRANSLATION = RESOURCES / "frontend-zh-CN.json"
 DESKTOP_TRANSLATION = RESOURCES / "desktop-zh-CN.json"
 LOCALIZABLE_STRINGS = RESOURCES / "Localizable.strings"
 
+APP_ASAR_REL = Path("Contents/Resources/app.asar")
 FRONTEND_I18N_REL = Path("Contents/Resources/ion-dist/i18n")
 FRONTEND_ASSETS_REL = Path("Contents/Resources/ion-dist/assets/v1")
 DESKTOP_RESOURCES_REL = Path("Contents/Resources")
+ASAR_PATCH_TARGET = ".vite/build/index.js"
+ASAR_INTEGRITY_BLOCK_SIZE = 4 * 1024 * 1024
 
 LANG_LIST_RE = re.compile(
     r'\["en-US","de-DE","fr-FR","ko-KR","ja-JP","es-419","es-ES","it-IT","hi-IN","pt-BR","id-ID"(.*?)\]'
@@ -316,6 +321,143 @@ def patch_hardcoded_frontend_strings(app: Path) -> None:
     print(f"Patched hardcoded frontend strings: {patched_strings} replacements in {patched_files} files")
 
 
+def align4(value: int) -> int:
+    return value + ((4 - (value % 4)) % 4)
+
+
+def read_asar_header(data: bytes, path: Path) -> tuple[int, str, dict[str, Any]]:
+    if len(data) < 16:
+        raise SystemExit(f"Unsupported app.asar header in {path}")
+
+    size_pickle_payload = struct.unpack_from("<I", data, 0)[0]
+    header_size = struct.unpack_from("<I", data, 4)[0]
+    if size_pickle_payload != 4 or header_size <= 0 or len(data) < 8 + header_size:
+        raise SystemExit(f"Unsupported app.asar size pickle in {path}")
+
+    header_pickle = data[8 : 8 + header_size]
+    header_payload_size = struct.unpack_from("<I", header_pickle, 0)[0]
+    header_string_size = struct.unpack_from("<i", header_pickle, 4)[0]
+    expected_payload_size = align4(4 + header_string_size)
+    if header_payload_size != expected_payload_size or header_size != 4 + header_payload_size:
+        raise SystemExit(f"Unsupported app.asar header pickle in {path}")
+
+    header_start = 8
+    header_end = header_start + header_string_size
+    header_string = header_pickle[header_start:header_end].decode("utf-8")
+    header = json.loads(header_string)
+    if not isinstance(header, dict):
+        raise SystemExit(f"Unsupported app.asar header JSON in {path}")
+    return header_size, header_string, header
+
+
+def encode_asar_header(header_string: str, expected_header_size: int) -> bytes:
+    header_bytes = header_string.encode("utf-8")
+    header_payload_size = align4(4 + len(header_bytes))
+    header_pickle = (
+        struct.pack("<I", header_payload_size)
+        + struct.pack("<i", len(header_bytes))
+        + header_bytes
+        + b"\0" * (header_payload_size - 4 - len(header_bytes))
+    )
+    if len(header_pickle) != expected_header_size:
+        raise SystemExit("Internal patch error: app.asar header length changed.")
+    return struct.pack("<I", 4) + struct.pack("<I", expected_header_size) + header_pickle
+
+
+def get_asar_file_entry(header: dict[str, Any], file_path: str) -> dict[str, Any]:
+    node: dict[str, Any] = header
+    for part in file_path.split("/"):
+        files = node.get("files")
+        if not isinstance(files, dict) or part not in files:
+            raise SystemExit(f"Could not find {file_path} in app.asar header.")
+        child = files[part]
+        if not isinstance(child, dict):
+            raise SystemExit(f"Unsupported app.asar header entry for {file_path}.")
+        node = child
+    for key in ["size", "offset", "integrity"]:
+        if key not in node:
+            raise SystemExit(f"Missing {key} for {file_path} in app.asar header.")
+    return node
+
+
+def calculate_file_integrity(data: bytes) -> dict[str, Any]:
+    blocks = [
+        hashlib.sha256(data[offset : offset + ASAR_INTEGRITY_BLOCK_SIZE]).hexdigest()
+        for offset in range(0, len(data), ASAR_INTEGRITY_BLOCK_SIZE)
+    ]
+    if not blocks:
+        blocks.append(hashlib.sha256(data).hexdigest())
+    return {
+        "algorithm": "SHA256",
+        "hash": hashlib.sha256(data).hexdigest(),
+        "blockSize": ASAR_INTEGRITY_BLOCK_SIZE,
+        "blocks": blocks,
+    }
+
+
+def update_electron_asar_integrity(app: Path, header_string: str) -> None:
+    info_plist = app / "Contents/Info.plist"
+    require_file(info_plist)
+    with info_plist.open("rb") as f:
+        info = plistlib.load(f)
+
+    integrity = info.get("ElectronAsarIntegrity")
+    if not isinstance(integrity, dict):
+        raise SystemExit("Info.plist is missing ElectronAsarIntegrity.")
+    app_asar = integrity.get("Resources/app.asar")
+    if not isinstance(app_asar, dict) or app_asar.get("algorithm") != "SHA256":
+        raise SystemExit("Info.plist has unsupported ElectronAsarIntegrity format.")
+
+    app_asar["hash"] = hashlib.sha256(header_string.encode("utf-8")).hexdigest()
+    tmp = info_plist.with_suffix(info_plist.suffix + ".tmp")
+    with tmp.open("wb") as f:
+        plistlib.dump(info, f, fmt=plistlib.FMT_XML)
+    os.replace(tmp, info_plist)
+
+
+def patch_custom3p_model_validation(app: Path) -> None:
+    path = app / APP_ASAR_REL
+    require_file(path)
+
+    old_expr = b'process.env.NODE_ENV!=="production"'
+    new_expr = b"false"
+    replacement = new_expr + b" " * (len(old_expr) - len(new_expr))
+    anchor = b"const Hte=" + old_expr + b"||!1,eRt="
+    patched = b"const Hte=" + replacement + b"||!1,eRt="
+    if len(anchor) != len(patched):
+        raise SystemExit("Internal patch error: custom 3P validation replacement changed length.")
+
+    data = bytearray(path.read_bytes())
+    header_size, _header_string, header = read_asar_header(data, path)
+    entry = get_asar_file_entry(header, ASAR_PATCH_TARGET)
+    content_offset = 8 + header_size + int(entry["offset"])
+    content_size = int(entry["size"])
+    content_end = content_offset + content_size
+    if content_offset < 0 or content_end > len(data):
+        raise SystemExit(f"Unsupported app.asar file bounds for {ASAR_PATCH_TARGET}.")
+
+    content = bytes(data[content_offset:content_end])
+    count = content.count(anchor)
+    if count != 1:
+        raise SystemExit(
+            "Could not patch custom 3P model validation. Claude bundle format may have changed."
+        )
+
+    patched_content = content.replace(anchor, patched, 1)
+    if len(patched_content) != len(content):
+        raise SystemExit("Internal patch error: app.asar length changed during custom 3P patch.")
+    data[content_offset:content_end] = patched_content
+
+    entry["integrity"] = calculate_file_integrity(patched_content)
+    updated_header_string = json.dumps(header, ensure_ascii=False, separators=(",", ":"))
+    updated_header = encode_asar_header(updated_header_string, header_size)
+    data[: len(updated_header)] = updated_header
+
+    path.write_bytes(data)
+    update_electron_asar_integrity(app, updated_header_string)
+    print("Patched custom 3P model-name validation in app.asar")
+
+
 def merge_frontend_locale(app: Path) -> tuple[int, int, int]:
     source = app / FRONTEND_I18N_REL / "en-US.json"
     target = app / FRONTEND_I18N_REL / "zh-CN.json"
@@ -534,6 +676,7 @@ def main() -> int:
     copy_app(args.app, patched_app)
     patch_language_whitelist(patched_app)
     patch_hardcoded_frontend_strings(patched_app)
+    patch_custom3p_model_validation(patched_app)
     merge_frontend_locale(patched_app)
     install_desktop_locale(patched_app)
     install_statsig_locale(patched_app)

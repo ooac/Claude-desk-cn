@@ -14,6 +14,7 @@
 - 自动给 Claude 前端语言白名单加入 `zh-CN`。
 - 自动合并当前 Claude 版本的英文语言文件与随包中文翻译。
 - 新版本新增但暂未翻译的字段会保留英文，避免界面缺失文本。
+- 自动绕过新版 Claude Desktop 对 3P gateway 模型名的本地 Anthropic 校验，避免 `deepseek-v4-pro` / `kimi-*` 等模型名导致配置整体失效。
 - 安装前自动备份原始 `/Applications/Claude.app`。
 - 自动写入 Claude 用户配置，将语言设置为 `zh-CN`。
 
@@ -70,6 +71,7 @@ chmod +x install.command
   `Claude.backup-before-zh-CN-20260424-120000.app`
 - 复制 Claude.app 到临时目录并打补丁。
 - 给前端语言白名单加入 `zh-CN`。
+- 对 `Contents/Resources/app.asar` 做等长补丁，关闭 3P gateway 启动阶段的 `inferenceModels` Anthropic 名称校验。
 - 合并当前 Claude 版本的 `en-US.json` 和随包中文翻译：
   当前版本已有中文翻译的 key 会变中文，新版本新增但本包没有的 key 会保留英文，避免应用缺字段。
 - 写入 `~/Library/Application Support/Claude/config.json`，设置 `"locale": "zh-CN"`。
@@ -79,6 +81,10 @@ chmod +x install.command
 ## 注意
 
 Claude Desktop 更新后可能会覆盖补丁，需要重新运行 `install.command`。
+
+3P gateway 模型名校验补丁只解决启动阶段 `inferenceModels` 名称被拒的问题，不保证第三方模型完全兼容 Claude Desktop / Claude Code 的协议与工具调用行为。Claude Desktop 更新后如果内部 bundle 结构变化，脚本会停止并提示补丁失败，而不是猜测修改。
+
+不要手动用十六进制编辑器或简单字符串替换直接修改 `Contents/Resources/app.asar`。Electron 会校验 asar header 里的文件完整性，以及 `Info.plist` 里的 `ElectronAsarIntegrity`；只改文件内容会导致启动时报 `ASAR Integrity Violation`。本脚本会同步更新 asar 内部文件 hash 和 `ElectronAsarIntegrity`。
 
 如果打开后 macOS 提示无法验证开发者或应用损坏，通常是因为 Claude Desktop 更新后，补丁修改资源文件导致原始签名失效。新版脚本会自动执行本机 ad-hoc 重签名、保留原 app 的 entitlements，并确保内部 app/framework 使用一致签名；如果你已经用旧版脚本打过补丁且遇到 `virtualization_entitlement_missing` / `Claude 的安装似乎已损坏`，请先恢复备份或重新安装官方 Claude.app，再重新运行 `install.command`。
 
