@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 One-click zh-CN patcher for Claude Desktop on macOS.
 
