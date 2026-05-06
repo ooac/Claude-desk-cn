@@ -140,9 +140,7 @@ def patch_hardcoded_frontend_strings(app: Path) -> None:
     assets_dir = app / FRONTEND_ASSETS_REL
     replacements = {
         '"New task"': '"新建任务"',
-        '"Projects"': '"项目"',
-        '"Scheduled"': '"计划任务"',
-        '"Customize"': '"自定义"',
+        '"New session"': '"新会话"',
         '"Drag to pin"': '"拖到此处固定"',
         '"Drop here"': '"拖到此处"',
         '"Let go"': '"松开"',
@@ -288,6 +286,13 @@ def patch_hardcoded_frontend_strings(app: Path) -> None:
         'label:"Headers helper script"': 'label:"请求头辅助脚本"',
         'label:"Helper cache TTL (sec)"': 'label:"辅助缓存 TTL（秒）"',
         'placeholder:"Absolute path"': 'placeholder:"绝对路径"',
+        '"Scheduled"': '"定时任务"',
+        '"Pinned"': '"已固定"',
+        '"What’s up next?"': '"接下来做什么？"',
+        '"Let\'s knock something off your list"': '"先把清单上的一件事做完"',
+        'label:"Projects"': 'label:"项目"',
+        'label:"Scheduled"': 'label:"计划任务"',
+        'label:"Customize"': 'label:"自定义"',
     }
     patched_files = 0
     patched_strings = 0
