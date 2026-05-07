@@ -1,14 +1,14 @@
-# Claude Desktop 中文补丁（zh-CN）
+#Claude Desktop 中文补丁（zh-CN）
 
 一个用于 macOS 版 Claude Desktop 的中文界面补丁。把本项目下载到本地后，双击 `install.command`，即可给 Claude Desktop 添加 `中文（中国）` 语言选项，并安装中文界面资源。
 
-本汉化方案仅支持使用 API 的方式。请先参照 https://linux.do/t/topic/2032192 配置
+本汉化方案仅支持使用 API 的方式。
 
-## Star History
+##星际历史
 
 [![Star History Chart](https://api.star-history.com/svg?repos=javaht/claude-desktop-zh-cn&type=Date)](https://www.star-history.com/#javaht/claude-desktop-zh-cn&Date)
 
-## 功能特点
+##功能特点
 
 - 一键安装 Claude Desktop 中文界面资源。
 - 自动给 Claude 前端语言白名单加入 `zh-CN`。
@@ -86,7 +86,7 @@ Claude Desktop 更新后可能会覆盖补丁，需要重新运行 `install.comm
 
 不要手动用十六进制编辑器或简单字符串替换直接修改 `Contents/Resources/app.asar`。Electron 会校验 asar header 里的文件完整性，以及 `Info.plist` 里的 `ElectronAsarIntegrity`；只改文件内容会导致启动时报 `ASAR Integrity Violation`。本脚本会同步更新 asar 内部文件 hash 和 `ElectronAsarIntegrity`。
 
-如果打开后 macOS 提示无法验证开发者或应用损坏，通常是因为 Claude Desktop 更新后，补丁修改资源文件导致原始签名失效。新版脚本会自动执行本机 ad-hoc 重签名、保留原 app 的 entitlements，并确保内部 app/framework 使用一致签名；如果你已经用旧版脚本打过补丁且遇到 `virtualization_entitlement_missing` / `Claude 的安装似乎已损坏`，请先恢复备份或重新安装官方 Claude.app，再重新运行 `install.command`。
+如果打开后 macOS 提示无法验证开发者或应用损坏，通常是因为 Claude Desktop 更新后，补丁修改资源文件导致原始签名失效。新版脚本会自动执行本机 ad-hoc 重签名、保留原 app 的 entitlements，并确保内部 app/framework 使用一致签名；如果你已经用旧版脚本打过补丁且遇到 ```虚拟化权限缺失``` / ```Claude 的安装似乎已损坏`，请先恢复备份或重新安装官方 Claude.app，再重新运行 `install.command`。
 
 不要只手动运行单条 `codesign --deep` 命令修复当前应用。Claude.app 内部还有 Electron Framework、Helper app、`.node` 原生模块和动态库，单条命令容易造成主程序和内部 framework 的 Team ID 不一致，启动时会出现 `mapping process and mapped file ... have different Team IDs`。请重新运行 `install.command`，让脚本按从内到外的顺序重签。
 
