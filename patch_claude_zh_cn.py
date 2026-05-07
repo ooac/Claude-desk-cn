@@ -458,8 +458,38 @@ def patch_hardcoded_frontend_strings(app: Path) -> None:
     cache_files, cache_count = patch_epitaxy_cache_bust(app / "Contents/Resources/ion-dist", assets_dir)
     patched_files += cache_files
     patched_strings += cache_count
+    health_files, health_count = patch_kimi_gateway_health_banner(assets_dir)
+    patched_files += health_files
+    patched_strings += health_count
 
     print(f"Patched hardcoded frontend strings: {patched_strings} replacements in {patched_files} files")
+
+
+def patch_kimi_gateway_health_banner(assets_dir: Path) -> tuple[int, int]:
+    """隐藏 Kimi 网关可连通时仍被旧健康状态标成 Unreachable 的 Cowork 横幅。"""
+    source = (
+        'if(d||!l||!w)return null;'
+        'const k=l.state===xV.InvalidConfig||l.state===xV.AuthFailed||l.state===xV.BootstrapError'
+    )
+    target = (
+        'if(d||!l||!w||l.state===xV.Unreachable&&'
+        '/api\\.kimi\\.com(?:\\/coding)?/i.test(String(l.endpoint??l.requestUrl??"")))return null;'
+        'const k=l.state===xV.InvalidConfig||l.state===xV.AuthFailed||l.state===xV.BootstrapError'
+    )
+    patched_files = 0
+    patched_strings = 0
+
+    for path in sorted(assets_dir.glob("*.js")):
+        text = path.read_text(encoding="utf-8")
+        occurrences = text.count(source)
+        if not occurrences:
+            continue
+        patched = text.replace(source, target)
+        path.write_text(patched, encoding="utf-8")
+        patched_files += 1
+        patched_strings += occurrences
+
+    return patched_files, patched_strings
 
 
 def patch_epitaxy_cache_bust(ion_dist_dir: Path, assets_dir: Path) -> tuple[int, int]:
