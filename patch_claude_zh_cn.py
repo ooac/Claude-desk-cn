@@ -383,6 +383,30 @@ def patch_hardcoded_frontend_strings(app: Path) -> None:
             patched_files += 1
             patched_strings += count
 
+    pinned_opus_re = re.compile(
+        r'(let e=\(e=>\{if\(0===d\.length\)return e;const t=new Set\(e\.map\(e=>e\.model\)\),s=\[\];'
+        r'for\(const n of e\)\{if\(s\.push\(n\),!d\.includes\(n\.model\)\)continue;'
+        r'const e=`\$\{n\.model\}\[1m\]`;t\.has\(e\)\|\|s\.push\(\{\.\.\.n,model:e,'
+        r'name:i\.formatMessage\(\{defaultMessage:"\{modelName\} \(1M context\)",id:"4jU30\+bnSv"\},'
+        r'\{modelName:n\.name\}\),name_i18n_key:void 0\}\)\}return s\}\)\(s\)\.filter\(e=>o\.includes\(e\.model\)\)'
+        r'\.map\(e=>e\.inactive\?\{\.\.\.e,inactive:!1\}:e\);)'
+        r'(?:e\.length>0&&!e\.some\(e=>"opus\[1m\]"===e\.model\)&&\(e=\[\{model:"opus\[1m\]",'
+        r'name:"Opus 4\.7 1M",inactive:!1,overflow:!1\},\.\.\.e\]\);)*'
+        r'const n=e\.some\(e=>e\.model===c\);'
+    )
+    pinned_opus_target = (
+        'e.length>0&&!e.some(e=>"opus[1m]"===e.model)&&'
+        '(e=[{model:"opus[1m]",name:"Opus 4.7 1M",inactive:!1,overflow:!1},...e]);'
+        'const n=e.some(e=>e.model===c);'
+    )
+    for path in sorted(assets_dir.glob("*.js")):
+        text = path.read_text(encoding="utf-8")
+        patched, count = pinned_opus_re.subn(lambda match: match.group(1) + pinned_opus_target, text)
+        if count and patched != text:
+            path.write_text(patched, encoding="utf-8")
+            patched_files += 1
+            patched_strings += count
+
     print(f"Patched hardcoded frontend strings: {patched_strings} replacements in {patched_files} files")
 
 
