@@ -338,6 +338,8 @@ def patch_hardcoded_frontend_strings(app: Path) -> None:
         'defaultMessage:"Generate code, documents, and designs in a dedicated window alongside your conversation."': 'defaultMessage:"在对话旁的专用窗口中生成代码、文档和设计。"',
         'defaultMessage:"Get notified when Claude has finished a response. Useful for long-running tasks."': 'defaultMessage:"Claude 完成响应后通知你，适合长时间运行的任务。"',
         'defaultMessage:"Artifacts"': 'defaultMessage:"创作物"',
+        'defaultMessage:"Settings default model not recognized"': 'defaultMessage:"设置中的默认模型无法识别"',
+        'function eee(e,t){if(!e)return null;if(t.includes(e))return e;': 'function eee(e,t){if(!e)return null;if(t.includes(e))return e;if((e==="opus"||e==="opus[1m]")&&t.includes("kimi-for-coding"))return"kimi-for-coding";',
         '"Scheduled"': '"定时任务"',
         '"Pinned"': '"已固定"',
         '"What’s up next?"': '"接下来做什么？"',

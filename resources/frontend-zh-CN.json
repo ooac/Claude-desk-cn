@@ -9061,6 +9061,7 @@
   "ik32gfKNOK": "在绕过权限模式下，Claude 会跳过权限检查，无需请求批准即可执行操作和运行命令。这包括危险操作和可能导致提示注入的操作。此模式仅应在隔离环境中使用。",
   "ikHJ281kAo": "为我的主题提供基于证据的见解",
   "ikd2/eAYSH": "{sign}{count, plural, one {# 聊天席位} other {# 聊天席位}}（按比例计算的月份）",
+  "ikq/okOhR8": "设置中的默认模型无法识别",
   "ikvQ0fXpha": "显示 {start}-{end}，共 {total, plural, one {# 名成员} other {# 名成员}}。 <link>加载全部 {serverTotal, number} 名成员</link>。",
   "ilExyZS0i/": "Cowork 于 5/11 默认开启",
   "ilQ5mc48a+": "告诉Claude该做什么",

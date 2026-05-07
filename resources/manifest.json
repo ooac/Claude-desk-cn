@@ -2,7 +2,7 @@
   "language": "zh-CN",
   "label": "中文（中国）",
   "source_app": "Claude Desktop",
-  "frontend_strings": 12340,
+  "frontend_strings": 12341,
   "desktop_shell_strings": 355,
   "notes": [
     "frontend-zh-CN.json is merged by key with the target machine's en-US.json",
