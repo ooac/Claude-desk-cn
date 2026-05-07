@@ -342,6 +342,7 @@ def patch_hardcoded_frontend_strings(app: Path) -> None:
         'Ld("cc-landing-draft-permission-mode","acceptEdits")': 'Ld("cc-landing-draft-permission-mode-cn","bypassPermissions")',
         'Mi("cc-landing-draft-permission-mode","acceptEdits",!1)': 'Mi("cc-landing-draft-permission-mode-cn","bypassPermissions",!1)',
         'Ld("epitaxy-folder-permission-mode",Kp,{scope:"account"})': 'Ld("epitaxy-folder-permission-mode-cn",Kp,{scope:"account"})',
+        'yc("baku_model","model","claude-sonnet-4-6",l())': 'yc("baku_model","model","opus[1m]",l())',
         '"Scheduled"': '"定时任务"',
         '"Pinned"': '"已固定"',
         '"What’s up next?"': '"接下来做什么？"',
@@ -390,18 +391,37 @@ def patch_hardcoded_frontend_strings(app: Path) -> None:
         r'name:i\.formatMessage\(\{defaultMessage:"\{modelName\} \(1M context\)",id:"4jU30\+bnSv"\},'
         r'\{modelName:n\.name\}\),name_i18n_key:void 0\}\)\}return s\}\)\(s\)\.filter\(e=>o\.includes\(e\.model\)\)'
         r'\.map\(e=>e\.inactive\?\{\.\.\.e,inactive:!1\}:e\);)'
-        r'(?:e\.length>0&&!e\.some\(e=>"opus\[1m\]"===e\.model\)&&\(e=\[\{model:"opus\[1m\]",'
+        r'(?:(?:e|s)\.length>0&&!e\.some\(e=>"opus\[1m\]"===e\.model\)&&\(e=\[\{model:"opus\[1m\]",'
         r'name:"Opus 4\.7 1M",inactive:!1,overflow:!1\},\.\.\.e\]\);)*'
         r'const n=e\.some\(e=>e\.model===c\);'
     )
     pinned_opus_target = (
-        'e.length>0&&!e.some(e=>"opus[1m]"===e.model)&&'
+        's.length>0&&!e.some(e=>"opus[1m]"===e.model)&&'
         '(e=[{model:"opus[1m]",name:"Opus 4.7 1M",inactive:!1,overflow:!1},...e]);'
         'const n=e.some(e=>e.model===c);'
     )
     for path in sorted(assets_dir.glob("*.js")):
         text = path.read_text(encoding="utf-8")
         patched, count = pinned_opus_re.subn(lambda match: match.group(1) + pinned_opus_target, text)
+        if count and patched != text:
+            path.write_text(patched, encoding="utf-8")
+            patched_files += 1
+            patched_strings += count
+
+    baku_opus_re = re.compile(
+        r'(let c=e\.filter\(e=>a\.includes\(e\.model\)\)\.map\(e=>e\.inactive\?\{\.\.\.e,inactive:!1\}:e\);)'
+        r'(?:e\.length>0&&!c\.some\(e=>"opus\[1m\]"===e\.model\)&&\(c=\[\{model:"opus\[1m\]",'
+        r'name:"Opus 4\.7 1M",inactive:!1,overflow:!1\},\.\.\.c\]\);)*'
+        r'const d=c\.some\(e=>e\.model===o\);'
+    )
+    baku_opus_target = (
+        'e.length>0&&!c.some(e=>"opus[1m]"===e.model)&&'
+        '(c=[{model:"opus[1m]",name:"Opus 4.7 1M",inactive:!1,overflow:!1},...c]);'
+        'const d=c.some(e=>e.model===o);'
+    )
+    for path in sorted(assets_dir.glob("*.js")):
+        text = path.read_text(encoding="utf-8")
+        patched, count = baku_opus_re.subn(lambda match: match.group(1) + baku_opus_target, text)
         if count and patched != text:
             path.write_text(patched, encoding="utf-8")
             patched_files += 1
