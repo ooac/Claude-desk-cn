@@ -455,8 +455,76 @@ def patch_hardcoded_frontend_strings(app: Path) -> None:
     cowork_files, cowork_count = patch_cowork_model_menu(assets_dir)
     patched_files += cowork_files
     patched_strings += cowork_count
+    cache_files, cache_count = patch_epitaxy_cache_bust(app / "Contents/Resources/ion-dist", assets_dir)
+    patched_files += cache_files
+    patched_strings += cache_count
 
     print(f"Patched hardcoded frontend strings: {patched_strings} replacements in {patched_files} files")
+
+
+def patch_epitaxy_cache_bust(ion_dist_dir: Path, assets_dir: Path) -> tuple[int, int]:
+    """给 Code 入口相关资源加版本参数，避免复制到其他电脑后命中旧缓存。"""
+    patched_files = 0
+    patched_strings = 0
+    code_chunk = next(
+        (
+            path
+            for path in sorted(assets_dir.glob("*.js"))
+            if "function em(t){const s=i()" in path.read_text(encoding="utf-8", errors="ignore")
+            and "modelExtraSections:gs" in path.read_text(encoding="utf-8", errors="ignore")
+        ),
+        None,
+    )
+    if not code_chunk:
+        return 0, 0
+
+    version_source = Path(__file__).read_bytes()
+    version = "zhcn-" + hashlib.sha256(version_source).hexdigest()[:12]
+    query_re = re.compile(r"\?v=zhcn-[0-9a-f]{12}")
+
+    def with_version(value: str) -> str:
+        return query_re.sub("", value) + f"?v={version}"
+
+    names = {code_chunk.name}
+    for path in sorted(assets_dir.glob("*.js")):
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        if code_chunk.name in text and not path.name.startswith("index-"):
+            names.add(path.name)
+
+    index_html = ion_dist_dir / "index.html"
+    if index_html.exists():
+        text = index_html.read_text(encoding="utf-8")
+        patched = re.sub(
+            r'(?P<prefix><script type="module" crossorigin src="/assets/v1/)(?P<name>index-[^"?]+\.js)(?:\?v=zhcn-[0-9a-f]{12})?(?P<suffix>"></script>)',
+            lambda match: f"{match.group('prefix')}{with_version(match.group('name'))}{match.group('suffix')}",
+            text,
+            count=1,
+        )
+        if patched != text:
+            index_html.write_text(patched, encoding="utf-8")
+            patched_files += 1
+            patched_strings += 1
+
+    for path in sorted(assets_dir.glob("*.js")):
+        text = path.read_text(encoding="utf-8")
+        patched = text
+        count = 0
+        for name in sorted(names, key=len, reverse=True):
+            patterns = [
+                (f'./{name}', f'./{with_version(name)}'),
+                (f'assets/v1/{name}', f'assets/v1/{with_version(name)}'),
+                (f'/assets/v1/{name}', f'/assets/v1/{with_version(name)}'),
+            ]
+            for source, target in patterns:
+                source_re = re.compile(re.escape(source) + r"(?:\?v=zhcn-[0-9a-f]{12})?")
+                patched, n = source_re.subn(target, patched)
+                count += n
+        if patched != text:
+            path.write_text(patched, encoding="utf-8")
+            patched_files += 1
+            patched_strings += count
+
+    return patched_files, patched_strings
 
 
 def patch_cowork_model_menu(assets_dir: Path) -> tuple[int, int]:
