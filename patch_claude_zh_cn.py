@@ -607,7 +607,9 @@ def patch_epitaxy_model_menu(assets_dir: Path) -> tuple[int, int]:
     patched_files = 0
     patched_strings = 0
     kimi_match = r'("kimi-for-coding"===W||/kimi/i.test(String(W))&&/k2\.6/i.test(String(W)))'
+    custom_effort_support = f'("opus"===W||"opus[1m]"===W||{kimi_match})'
     effort_support = f'(_e||"opus"===W||"opus[1m]"===W||{kimi_match})'
+    effort_menu_support = f'({custom_effort_support}||(_e&&(t?!!fs:"bridge"!==is)))'
 
     z_name_re = re.compile(
         r'function Zp\(e\)\{(?:if\("opus\[1m\]"===e\?\.model\|\|"opus"===e\?\.model\)'
@@ -691,9 +693,15 @@ def patch_epitaxy_model_menu(assets_dir: Path) -> tuple[int, int]:
     )
 
     effort_patterns = {
-        'ps=_e&&(t?!!fs:"bridge"!==is),ms=': f'ps={effort_support}&&(t?!!fs:"bridge"!==is),ms=',
-        'ps=(_e||"opus"===W||"opus[1m]"===W)&&(t?!!fs:"bridge"!==is),ms=': f'ps={effort_support}&&(t?!!fs:"bridge"!==is),ms=',
-        'ps=(_e||"opus"===W||"opus[1m]"===W||"Kimi-k2.6"===W)&&(t?!!fs:"bridge"!==is),ms=': f'ps={effort_support}&&(t?!!fs:"bridge"!==is),ms=',
+        'ps=_e&&(t?!!fs:"bridge"!==is),ms=': f'ps={effort_menu_support},ms=',
+        'ps=(_e||"opus"===W||"opus[1m]"===W)&&(t?!!fs:"bridge"!==is),ms=': f'ps={effort_menu_support},ms=',
+        'ps=(_e||"opus"===W||"opus[1m]"===W||"Kimi-k2.6"===W)&&(t?!!fs:"bridge"!==is),ms=': f'ps={effort_menu_support},ms=',
+        'ps=(_e||"opus"===W||"opus[1m]"===W||/kimi/i.test(String(W))&&/k2\\.6/i.test(String(W)))&&(t?!!fs:"bridge"!==is),ms=': f'ps={effort_menu_support},ms=',
+        'ps=(_e||"opus"===W||"opus[1m]"===W||/kimi/i.test(String(W))&&/k2\\.6/i.test(String(W)))&&(t?!!fs:"bridge"!==is),[codeEffort': f'ps={effort_menu_support},[codeEffort',
+        f'ps={effort_support}&&(t?!!fs:"bridge"!==is),ms=': f'ps={effort_menu_support},ms=',
+        f'ps={effort_support}&&(t?!!fs:"bridge"!==is),[codeEffort': f'ps={effort_menu_support},[codeEffort',
+        f'ps={effort_menu_support},ms=': f'ps={effort_menu_support},ms=',
+        f'ps={effort_menu_support},[codeEffort': f'ps={effort_menu_support},[codeEffort',
         'effort:_e?Te:void 0,repoInfo': f'effort:{effort_support}?ms:void 0,repoInfo',
         'effort:(_e||"opus"===W||"opus[1m]"===W)?Te:void 0,repoInfo': f'effort:{effort_support}?ms:void 0,repoInfo',
         'effort:(_e||"opus"===W||"opus[1m]"===W||"Kimi-k2.6"===W)?Te:void 0,repoInfo': f'effort:{effort_support}?ms:void 0,repoInfo',
