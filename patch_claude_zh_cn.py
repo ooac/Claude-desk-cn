@@ -391,13 +391,14 @@ def patch_hardcoded_frontend_strings(app: Path) -> None:
         r'name:i\.formatMessage\(\{defaultMessage:"\{modelName\} \(1M context\)",id:"4jU30\+bnSv"\},'
         r'\{modelName:n\.name\}\),name_i18n_key:void 0\}\)\}return s\}\)\(s\)\.filter\(e=>o\.includes\(e\.model\)\)'
         r'\.map\(e=>e\.inactive\?\{\.\.\.e,inactive:!1\}:e\);)'
-        r'(?:(?:e|s)\.length>0&&!e\.some\(e=>"opus\[1m\]"===e\.model\)&&\(e=\[\{model:"opus\[1m\]",'
-        r'name:"Opus 4\.7 1M",inactive:!1,overflow:!1\},\.\.\.e\]\);)*'
-        r'const n=e\.some\(e=>e\.model===c\);'
+        r'.*?const n=e\.some\(e=>e\.model===c\);',
+        re.DOTALL,
     )
     pinned_opus_target = (
-        's.length>0&&!e.some(e=>"opus[1m]"===e.model)&&'
-        '(e=[{model:"opus[1m]",name:"Opus 4.7 1M",inactive:!1,overflow:!1},...e]);'
+        'if(s.length>0&&!e.some(e=>"opus[1m]"===e.model)){'
+        'const l=s.find(e=>"opus[1m]"===e.model)??s.find(e=>/opus/i.test(e.model)&&/\\[1m\\]/i.test(e.model))??'
+        's.find(e=>e.thinking_modes?.length)??s[0];'
+        'e=[{...l,model:"opus[1m]",name:"Opus 4.7 1M",name_i18n_key:void 0,inactive:!1,overflow:!1},...e]}'
         'const n=e.some(e=>e.model===c);'
     )
     for path in sorted(assets_dir.glob("*.js")):
@@ -410,13 +411,14 @@ def patch_hardcoded_frontend_strings(app: Path) -> None:
 
     baku_opus_re = re.compile(
         r'(let c=e\.filter\(e=>a\.includes\(e\.model\)\)\.map\(e=>e\.inactive\?\{\.\.\.e,inactive:!1\}:e\);)'
-        r'(?:e\.length>0&&!c\.some\(e=>"opus\[1m\]"===e\.model\)&&\(c=\[\{model:"opus\[1m\]",'
-        r'name:"Opus 4\.7 1M",inactive:!1,overflow:!1\},\.\.\.c\]\);)*'
-        r'const d=c\.some\(e=>e\.model===o\);'
+        r'.*?const d=c\.some\(e=>e\.model===o\);',
+        re.DOTALL,
     )
     baku_opus_target = (
-        'e.length>0&&!c.some(e=>"opus[1m]"===e.model)&&'
-        '(c=[{model:"opus[1m]",name:"Opus 4.7 1M",inactive:!1,overflow:!1},...c]);'
+        'if(e.length>0&&!c.some(e=>"opus[1m]"===e.model)){'
+        'const n=e.find(e=>"opus[1m]"===e.model)??e.find(e=>/opus/i.test(e.model)&&/\\[1m\\]/i.test(e.model))??'
+        'e.find(e=>e.thinking_modes?.length)??e[0];'
+        'c=[{...n,model:"opus[1m]",name:"Opus 4.7 1M",name_i18n_key:void 0,inactive:!1,overflow:!1},...c]}'
         'const d=c.some(e=>e.model===o);'
     )
     for path in sorted(assets_dir.glob("*.js")):
@@ -841,6 +843,35 @@ def backup_and_replace(original: Path, patched: Path, dry_run: bool) -> Path:
     return backup
 
 
+def prune_old_backups(original: Path, keep: Path, user_home: Path, dry_run: bool, keep_count: int = 1) -> None:
+    backups = sorted(original.parent.glob(f"{original.stem}.backup-before-zh-CN-*.app"))
+    if not backups:
+        return
+
+    keep_paths = set(backups[-keep_count:])
+    keep_paths.add(keep)
+    stale = [path for path in backups if path not in keep_paths]
+    if not stale:
+        return
+
+    trash_dir = user_home / ".Trash" / f"Claude-old-backups-{dt.datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    if dry_run:
+        for path in stale:
+            print(f"[dry-run] Would move old backup to trash: {path} -> {trash_dir / path.name}")
+        return
+
+    trash_dir.mkdir(parents=True, exist_ok=True)
+    print(f"Moving {len(stale)} old backup(s) to: {trash_dir}")
+    for path in stale:
+        shutil.move(str(path), str(trash_dir / path.name))
+
+    sudo_uid = os.environ.get("SUDO_UID")
+    sudo_gid = os.environ.get("SUDO_GID")
+    if sudo_uid and sudo_gid:
+        for path in [trash_dir, *trash_dir.iterdir()]:
+            os.chown(path, int(sudo_uid), int(sudo_gid))
+
+
 def verify(app: Path) -> None:
     frontend = app / FRONTEND_I18N_REL / "zh-CN.json"
     data = load_json(frontend)
@@ -915,6 +946,7 @@ def main() -> int:
     backup = backup_and_replace(args.app, patched_app, args.dry_run)
     if not args.dry_run:
         print(f"Backup kept at: {backup}")
+        prune_old_backups(args.app, backup, args.user_home, args.dry_run)
         if args.launch:
             run(["open", "-a", str(args.app)], check=False)
 

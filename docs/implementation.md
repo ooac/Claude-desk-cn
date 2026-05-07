@@ -153,7 +153,7 @@ opus[1m]
 
 1. 本项目不修改 `~/.claude/settings.json` 中的 `model` 字段。
 2. 前端模型识别函数会被补丁成：如果当前模型是 `opus` 或 `opus[1m]`，并且第三方网关返回了非空模型列表，就把 `opus[1m]` 视为有效模型，但返回值仍然是 `opus[1m]`。
-3. 前端模型候选列表会固定注入 `opus[1m]`，显示名为 `Opus 4.7 1M`。即使用户手动切到 `Kimi-k2.6`、DeepSeek 或其他第三方模型，Opus 也会继续保留在下拉菜单第一项。
+3. 前端模型候选列表会固定注入 `opus[1m]`，显示名为 `Opus 4.7 1M`。注入时会优先复制现有 Opus 或带 `thinking_modes` 的模型元数据，再覆盖模型名和显示名，避免强度/思考模式菜单消失。即使用户手动切到 `Kimi-k2.6`、DeepSeek 或其他第三方模型，Opus 也会继续保留在下拉菜单第一项。
 4. 默认对话和 Claude Code 分别走 `baku_model` 与 `ccr_model` / `cowork_model` 路径。本项目会同时补丁这两条路径，普通默认对话不再回落到 `Sonnet 4.6`。
 
 补丁后的关键逻辑等价于：
@@ -174,6 +174,8 @@ if ((e === "opus" || e === "opus[1m]") && t.length > 0) return e;
 模型菜单里的第三方模型是直选项。例如直接选择 `Kimi-k2.6` 时，桌面端会按 `Kimi-k2.6` 这个模型身份工作，不再伪装成 Opus。只有选择 `Opus 4.7 1M` 时，才是保留 Opus 身份并交给网关做后端路由。
 
 默认对话路径里，原始默认值是 `claude-sonnet-4-6`。补丁会把它改为 `opus[1m]`，并在普通对话模型列表里固定插入 `Opus 4.7 1M`。这样新建普通对话时不会因为找不到可选模型而显示空白，也不会在发送消息后自动变成 `Sonnet 4.6`。
+
+强度菜单不是单独的静态文案，而是读取模型候选项上的能力元数据生成。因此固定 Opus 项不能只写 `{ model, name }`，必须保留 `thinking_modes` 等字段。当前实现会从网关返回的模型列表中寻找可复用的 Opus 或支持思考模式的模型项作为模板，再生成固定的 `Opus 4.7 1M` 入口。
 
 ### 7. 可选的第三方模型校验补丁
 
@@ -286,6 +288,8 @@ en-US
 ```text
 /Applications/Claude.app
 ```
+
+脚本只保留最新一个中文补丁备份，旧的 `Claude.backup-before-zh-CN-*.app` 会移动到当前用户废纸篓中的 `Claude-old-backups-*` 目录，避免 `/Applications` 长期堆积多个 Claude 副本。
 
 如果需要恢复，只要退出 Claude，删除当前 `/Applications/Claude.app`，再把备份改名为 `Claude.app` 放回 `/Applications` 即可。
 
