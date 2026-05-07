@@ -4,9 +4,6 @@
 
 本汉化方案仅支持使用 API 的方式。
 
-##星际历史
-
-[![Star History Chart](https://api.star-history.com/svg?repos=javaht/claude-desktop-zh-cn&type=Date)](https://www.star-history.com/#javaht/claude-desktop-zh-cn&Date)
 
 ##功能特点
 
