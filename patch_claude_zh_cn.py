@@ -349,11 +349,16 @@ def patch_hardcoded_frontend_strings(app: Path) -> None:
         'F=z?.sessionData?.session_context?.model??null,': 'F=(e=>e==="kimi-for-coding"?"opus[1m]":e)(z?.sessionData?.session_context?.model??null),',
         'return t.sessionModel??t.sessionData?.session_context?.model})??null': 'return(e=>e==="kimi-for-coding"?"opus[1m]":e)(t.sessionModel??t.sessionData?.session_context?.model)})??null',
         'const n=s.find(t=>t.model===e),r=(n?.thinking_modes??[]).map': 'const n=s.find(t=>t.model===e)??(("opus"===e||"opus[1m]"===e)?s.find(e=>"opus[1m]"===e.model)??s.find(e=>/opus/i.test(e.model)&&/\\[1m\\]/i.test(e.model))??s.find(e=>e.thinking_modes?.length):void 0),r=(n?.thinking_modes??[]).map',
-        'W||(W=F.find(e=>e.model===L)??sgt);': 'W||(W=F.find(e=>e.model===L)??(("opus"===V||"opus[1m]"===V||"opus"===L||"opus[1m]"===L)?{model:"opus[1m]",name:"Opus 4.7 1M",inactive:!1,overflow:!1}:sgt));',
-        'W||(W=F.find(e=>e.model===L)??(("opus"===V||"opus[1m]"===V||"opus"===L||"opus[1m]"===L)?{model:"opus[1m]",name:"Opus 4.7 1M",inactive:!1,overflow:!1}:sgt));const G=': 'W||(W=F.find(e=>e.model===L)??(("opus"===V||"opus[1m]"===V||"opus"===L||"opus[1m]"===L)?{model:"opus[1m]",name:"Opus 4.7 1M",inactive:!1,overflow:!1}:sgt));\"\"===Vft(W)&&(W={model:\"opus[1m]\",name:\"Opus 4.7 1M\",inactive:!1,overflow:!1});const G=',
+        'W||(W=F.find(e=>e.model===L)??sgt);': 'W||(W=F.find(e=>e.model===L)??(("opus"===V||"opus[1m]"===V||"opus"===L||"opus[1m]"===L)?{model:"opus[1m]",name:"Opus 4.71M",inactive:!1,overflow:!1}:sgt));',
+        'W||(W=F.find(e=>e.model===L)??(("opus"===V||"opus[1m]"===V||"opus"===L||"opus[1m]"===L)?{model:"opus[1m]",name:"Opus 4.71M",inactive:!1,overflow:!1}:sgt));const G=': 'W||(W=F.find(e=>e.model===L)??(("opus"===V||"opus[1m]"===V||"opus"===L||"opus[1m]"===L)?{model:"opus[1m]",name:"Opus 4.71M",inactive:!1,overflow:!1}:sgt));(\"\"===Vft(W)||\"opus\"===V||\"opus[1m]\"===V||\"opus\"===L||\"opus[1m]\"===L)&&(W={...W,model:\"opus[1m]\",name:\"Opus 4.71M\",inactive:!1,overflow:!1});const G=',
+        '""===Vft(W)&&(W={model:"opus[1m]",name:"Opus 4.7 1M",inactive:!1,overflow:!1});const G=': '(""===Vft(W)||"opus"===V||"opus[1m]"===V||"opus"===L||"opus[1m]"===L)&&(W={...W,model:"opus[1m]",name:"Opus 4.71M",inactive:!1,overflow:!1});const G=',
         'z=r??A,{allModelOptions:F,mainModels:U,overflowModels:q}=R': 'z=(e=>e==="kimi-for-coding"?"opus[1m]":e)(r??A),{allModelOptions:F,mainModels:U,overflowModels:q}=R',
-        'const Wft=({model:e,compact:t=!1,thinkingLabel:s})=>{const n=Vft(e,{mutedSuffix:!0});return': 'const Wft=({model:e,compact:t=!1,thinkingLabel:s})=>{let n=Vft(e,{mutedSuffix:!0});""===n&&(n="Opus 4.7 1M");return',
-        'function Vft(e,t={}){const s=e.model?Z9(e.model):null;': 'function Vft(e,t={}){if("opus[1m]"===e?.model||"opus"===e?.model)return"Opus 4.7 1M";const s=e.model?Z9(e.model):null;',
+        '{activeMode:te}=Gft(z,Z),se=O?void 0:te?.label,{toggleConversationSetting:ne}=O6({source:"modelSelector"})': '{activeMode:te}=Gft(z,Z),[me,he]=n.useState(()=>{try{return localStorage.getItem("cowork_effort_level")||"medium"}catch{return"medium"}}),fe=n.useMemo(()=>_??{current:me,options:[{value:"low",label:"低"},{value:"medium",label:"中"},{value:"high",label:"高"},{value:"xhigh",label:"超高"},{value:"max",label:"最大"}],onSelect:e=>{he(e);try{localStorage.setItem("cowork_effort_level",e),window.dispatchEvent(new CustomEvent("cowork-effort-change",{detail:e}))}catch{}}},[_,me]),se=O?{low:"低",medium:"中",high:"高",xhigh:"超高",max:"最大"}[me]:te?.label,{toggleConversationSetting:ne}=O6({source:"modelSelector"})',
+        '_&&a.jsxs(a.Fragment,{children:[a.jsx(ol,{className:IR}),a.jsx("div",{className:"text-xs text-text-500 pt-2 pb-1 px-2",children:a.jsx(c,{defaultMessage:"强度",id:"VKZ/U8vAsk"})}),a.jsx(igt,{section:_,compactMenu:j})]})': 'fe&&a.jsxs(a.Fragment,{children:[a.jsx(ol,{className:IR}),a.jsx("div",{className:"text-xs text-text-500 pt-2 pb-1 px-2",children:a.jsx(c,{defaultMessage:"强度",id:"VKZ/U8vAsk"})}),a.jsx(igt,{section:fe,compactMenu:j})]})',
+        'fe&&a.jsxs(a.Fragment,{children:[a.jsx(ol,{className:IR}),a.jsx("div",{className:"text-xs text-text-500 pt-2 pb-1 px-2",children:a.jsx(c,{defaultMessage:"强度",id:"VKZ/U8vAsk"})}),a.jsx(igt,{section:fe,compactMenu:j})]})': 'a.jsxs(a.Fragment,{children:[a.jsx(ol,{className:IR}),a.jsx("div",{className:"text-xs text-text-500 pt-2 pb-1 px-2",children:a.jsx(c,{defaultMessage:"强度",id:"VKZ/U8vAsk"})}),a.jsx(igt,{section:{current:me,options:[{value:"low",label:"低"},{value:"medium",label:"中"},{value:"high",label:"高"},{value:"xhigh",label:"超高"},{value:"max",label:"最大"}],onSelect:e=>{he(e);try{localStorage.setItem("cowork_effort_level",e),window.dispatchEvent(new CustomEvent("cowork-effort-change",{detail:e}))}catch{}}},compactMenu:j})]})',
+        'const Wft=({model:e,compact:t=!1,thinkingLabel:s})=>{const n=Vft(e,{mutedSuffix:!0});return': 'const Wft=({model:e,compact:t=!1,thinkingLabel:s})=>{let n=Vft(e,{mutedSuffix:!0});""===n&&(n="Opus 4.71M");return',
+        'function Vft(e,t={}){const s=e.model?Z9(e.model):null;': 'function Vft(e,t={}){if("opus[1m]"===e?.model||"opus"===e?.model)return"Opus 4.71M";const s=e.model?Z9(e.model):null;',
+        'j=pc("cowork_effort_level","medium",Wu),M=pc("cowork_model",vJt,yJt),': 'j=(()=>{const e=pc("cowork_effort_level","medium",Wu),[t,s]=n.useState(()=>{try{return localStorage.getItem("cowork_effort_level")||e}catch{return e}});return n.useEffect(()=>{const e=()=>{try{s(localStorage.getItem("cowork_effort_level")||"medium")}catch{s("medium")}};if("undefined"==typeof window)return;e();return window.addEventListener("cowork-effort-change",e),()=>window.removeEventListener("cowork-effort-change",e)},[]),t})(),M=pc("cowork_model",vJt,yJt),',
         '"Scheduled"': '"定时任务"',
         '"Pinned"': '"已固定"',
         '"What’s up next?"': '"接下来做什么？"',
@@ -409,7 +414,7 @@ def patch_hardcoded_frontend_strings(app: Path) -> None:
         'if(s.length>0&&!e.some(e=>"opus[1m]"===e.model)){'
         'const l=s.find(e=>"opus[1m]"===e.model)??s.find(e=>/opus/i.test(e.model)&&/\\[1m\\]/i.test(e.model))??'
         's.find(e=>e.thinking_modes?.length)??s[0];'
-        'e=[{...l,model:"opus[1m]",name:"Opus 4.7 1M",name_i18n_key:void 0,inactive:!1,overflow:!1},...e]}'
+        'e=[{...l,model:"opus[1m]",name:"Opus 4.71M",name_i18n_key:void 0,inactive:!1,overflow:!1},...e]}'
         'if(c&&!e.some(e=>e.model===c)){const m=s.find(e=>e.model===c)??s.find(e=>e.thinking_modes?.length)??s[0];'
         'e=[{...m,model:c,name:m?.name??tee(c),name_i18n_key:void 0,inactive:!1,overflow:!1},...e]}'
         'const n=e.some(e=>e.model===c);'
@@ -431,7 +436,7 @@ def patch_hardcoded_frontend_strings(app: Path) -> None:
         'if(e.length>0&&!c.some(e=>"opus[1m]"===e.model)){'
         'const n=e.find(e=>"opus[1m]"===e.model)??e.find(e=>/opus/i.test(e.model)&&/\\[1m\\]/i.test(e.model))??'
         'e.find(e=>e.thinking_modes?.length)??e[0];'
-        'c=[{...n,model:"opus[1m]",name:"Opus 4.7 1M",name_i18n_key:void 0,inactive:!1,overflow:!1},...c]}'
+        'c=[{...n,model:"opus[1m]",name:"Opus 4.71M",name_i18n_key:void 0,inactive:!1,overflow:!1},...c]}'
         'if(o&&!c.some(e=>e.model===o)){const d=e.find(e=>e.model===o)??e.find(e=>e.thinking_modes?.length)??e[0];'
         'c=[{...d,model:o,name:d?.name??tee(o),name_i18n_key:void 0,inactive:!1,overflow:!1},...c]}'
         'const d=c.some(e=>e.model===o);'
@@ -444,7 +449,302 @@ def patch_hardcoded_frontend_strings(app: Path) -> None:
             patched_files += 1
             patched_strings += count
 
+    epitaxy_files, epitaxy_count = patch_epitaxy_model_menu(assets_dir)
+    patched_files += epitaxy_files
+    patched_strings += epitaxy_count
+    cowork_files, cowork_count = patch_cowork_model_menu(assets_dir)
+    patched_files += cowork_files
+    patched_strings += cowork_count
+
     print(f"Patched hardcoded frontend strings: {patched_strings} replacements in {patched_files} files")
+
+
+def patch_cowork_model_menu(assets_dir: Path) -> tuple[int, int]:
+    """把 Cowork 模型菜单固定为 Opus 伪装入口、Kimi 真实入口和完整强度。"""
+    patched_files = 0
+    patched_strings = 0
+
+    vft_re = re.compile(
+        r'function Vft\(e,t=\{\}\)\{(?:if\("opus\[1m\]"===e\?\.model\|\|"opus"===e\?\.model\)'
+        r'return"Opus 4\.7(?:1)? ?1?M";)?const s=e\.model\?Z9\(e\.model\):null;',
+        re.DOTALL,
+    )
+    vft_target = (
+        'function Vft(e,t={}){const r=String(e?.model??e?.name??"");'
+        'if("opus[1m]"===e?.model||"opus"===e?.model)return"Opus 4.71M";'
+        'if("kimi-for-coding"===r.toLowerCase()||/kimi/i.test(r)&&/k2\\.6/i.test(r))return"Kimi-k2.6";'
+        'const s=e.model?Z9(e.model):null;'
+    )
+
+    wft_patterns = {
+        '""===n&&(n="Opus 4.7 1M");return': '""===n&&(n="Opus 4.71M");return',
+        '""===n&&(n="Opus 4.71M");return': '""===n&&(n="Opus 4.71M");return',
+    }
+
+    ogt_model_res = [
+        re.compile(
+            r'z=\(e=>\{const t=String\(e\?\?""\).*?'
+            r'const Y=Uft\(\),Q=!0,X=\[Ne,Re\],J=\[\],ee=\[\],',
+            re.DOTALL,
+        ),
+        re.compile(
+            r'z=.*?,\{allModelOptions:F,mainModels:U,overflowModels:q\}=R,'
+            r'B=Xc\("sticky_model_selector"\),\[\$,H\]=n\.useState\(null\),V=.*?'
+            r'const G=n\.useRef\(null\),Z=L6\("paprika_mode"\);Hft\(z\);'
+            r'const Y=Uft\(\),Q=.*?,X=.*?,J=.*?,ee=.*?,',
+            re.DOTALL,
+        ),
+    ]
+    ogt_model_target = (
+        'z=(e=>{const t=String(e??"").toLowerCase();'
+        'if("kimi-for-coding"===t||/kimi/i.test(String(e))&&/k2\\.6/i.test(String(e)))return"kimi-for-coding";'
+        'if("opus"===t||"opus[1m]"===t)return"opus[1m]";'
+        'return"opus[1m]"})(r??A),{allModelOptions:F}=R,'
+        'B=Xc("sticky_model_selector"),[$,H]=n.useState(null),'
+        'ke=e=>{const t=String(e??"").toLowerCase();return"kimi-for-coding"===t||/kimi/i.test(String(e))&&/k2\\.6/i.test(String(e))?"kimi-for-coding":"opus[1m]"},'
+        'Ce=F.find(e=>{const t=String(e.model??"").toLowerCase(),s=String(e.name??"").toLowerCase();'
+        'return"kimi-for-coding"===t||"kimi-for-coding"===s||"kimi-k2.6"===t||"kimi-k2.6"===s||/kimi.*k2\\.6/i.test(t)||/kimi.*k2\\.6/i.test(s)}),'
+        'Se=Ce?.model??"kimi-for-coding",'
+        'Ne={...(F.find(e=>"opus[1m]"===e.model)??F.find(e=>/opus/i.test(e.model)&&/\\[1m\\]/i.test(e.model))??F.find(e=>e.thinking_modes?.length)??{}),model:"opus[1m]",name:"Opus 4.71M",name_i18n_key:void 0,inactive:!1,overflow:!1},'
+        'Re={...(Ce??F.find(e=>e.thinking_modes?.length)??{}),model:Se,name:"Kimi-k2.6",name_i18n_key:void 0,inactive:!1,overflow:!1},'
+        'V=$??z,W="kimi-for-coding"===ke(V)?Re:Ne,'
+        'G=n.useRef(null),Z=L6("paprika_mode");Hft(z);'
+        'const Y=Uft(),Q=!0,X=[Ne,Re],J=[],ee=[],'
+    )
+
+    effort_re = re.compile(
+        r'\{activeMode:te\}=Gft\(z,Z\),.*?,se=O\?.*?:te\?\.label,'
+        r'\{toggleConversationSetting:ne\}=O6\(\{source:"modelSelector"\}\)',
+        re.DOTALL,
+    )
+    effort_target = (
+        '{activeMode:te}=Gft(z,Z),'
+        '[me,he]=n.useState(()=>{try{return localStorage.getItem("cowork_effort_level")||"high"}catch{return"high"}}),'
+        'fe=n.useMemo(()=>{const e=e=>{he(e);try{localStorage.setItem("cowork_effort_level",e),'
+        'window.dispatchEvent(new CustomEvent("cowork-effort-change",{detail:e}))}catch{}},'
+        't=_?.current??me,s=_?.onSelect??e;return{current:t,'
+        'options:[{value:"low",label:"低"},{value:"medium",label:"中"},{value:"high",label:"高"},{value:"xhigh",label:"超高"},{value:"max",label:"最大"}],'
+        'onSelect:e=>{s(e);_?.onSelect||he(e)}}},[_,me]),'
+        'se=O?{low:"低",medium:"中",high:"高",xhigh:"超高",max:"最大"}[fe.current]:te?.label,'
+        '{toggleConversationSetting:ne}=O6({source:"modelSelector"})'
+    )
+
+    handler_re = re.compile(
+        r'const ue=e=>\{if\(e\.model===V\)return;if\(ae\(e\.model\)\)return;'
+        r'if\(re\|\|!ngt\(e\.model,!1,!ie,L,ce\)\)\{',
+        re.DOTALL,
+    )
+    handler_target = (
+        'const ue=e=>{const t=String(e.model??"").toLowerCase(),s="opus"===t||"opus[1m]"===t||'
+        '"kimi-for-coding"===t||/kimi/i.test(String(e.model))&&/k2\\.6/i.test(String(e.model));'
+        'if(e.model===V)return;if(!s&&ae(e.model))return;if(s||re||!ngt(e.model,!1,!ie,L,ce)){'
+    )
+    handler_state_patterns = {
+        'Y(e.model)||ne("compass_mode",null),B||H(e.model),D(e.model),i?.(e)}': (
+            'Y(e.model)||ne("compass_mode",null),H(e.model),D(e.model),i?.(e)}'
+        ),
+        'Y(e.model)||ne("compass_mode",null),H(e.model),D(e.model),i?.(e)}': (
+            'Y(e.model)||ne("compass_mode",null),H(e.model),D(e.model),i?.(e)}'
+        ),
+    }
+
+    menu_effort_re = re.compile(
+        r'a\.jsx\(igt,\{section:\{current:me,options:\[\{value:"low",label:"低"\},'
+        r'\{value:"medium",label:"中"\},\{value:"high",label:"高"\}(?:,\{value:"xhigh",label:"超高"\},\{value:"max",label:"最大"\})?\],'
+        r'onSelect:e=>\{he\(e\);try\{localStorage\.setItem\("cowork_effort_level",e\),'
+        r'window\.dispatchEvent\(new CustomEvent\("cowork-effort-change",\{detail:e\}\)\)\}catch\{\}\}\},compactMenu:j\}\)',
+        re.DOTALL,
+    )
+    menu_effort_target = 'a.jsx(igt,{section:fe,compactMenu:j})'
+
+    for path in sorted(assets_dir.glob("*.js")):
+        text = path.read_text(encoding="utf-8")
+        if "cowork_model" not in text or "const ogt=({conversationUuid" not in text:
+            continue
+        patched = text
+        count = 0
+        patched, n = vft_re.subn(vft_target, patched, count=1)
+        count += n
+        for source, target in wft_patterns.items():
+            occurrences = patched.count(source)
+            if occurrences:
+                patched = patched.replace(source, target)
+                count += occurrences
+        ogt_start = patched.find("ogt=({conversationUuid")
+        if ogt_start >= 0:
+            ogt_end = min(len(patched), ogt_start + 30000)
+            ogt_chunk = patched[ogt_start:ogt_end]
+            ogt_count = 0
+            for ogt_model_re in ogt_model_res:
+                ogt_chunk, n = ogt_model_re.subn(ogt_model_target, ogt_chunk, count=1)
+                ogt_count += n
+                if n:
+                    break
+            ogt_chunk, n = effort_re.subn(effort_target, ogt_chunk, count=1)
+            ogt_count += n
+            ogt_chunk, n = handler_re.subn(handler_target, ogt_chunk, count=1)
+            ogt_count += n
+            for source, target in handler_state_patterns.items():
+                occurrences = ogt_chunk.count(source)
+                if occurrences:
+                    ogt_chunk = ogt_chunk.replace(source, target)
+                    ogt_count += occurrences
+            ogt_chunk, n = menu_effort_re.subn(menu_effort_target, ogt_chunk, count=1)
+            ogt_count += n
+            if ogt_count:
+                patched = patched[:ogt_start] + ogt_chunk + patched[ogt_end:]
+                count += ogt_count
+        if patched != text:
+            path.write_text(patched, encoding="utf-8")
+            patched_files += 1
+            patched_strings += count
+
+    return patched_files, patched_strings
+
+
+def patch_epitaxy_model_menu(assets_dir: Path) -> tuple[int, int]:
+    """把 Claude Code 模型菜单固定为 Opus 伪装入口、Kimi 真实入口和完整强度。"""
+    patched_files = 0
+    patched_strings = 0
+    kimi_match = r'("kimi-for-coding"===W||/kimi/i.test(String(W))&&/k2\.6/i.test(String(W)))'
+    effort_support = f'(_e||"opus"===W||"opus[1m]"===W||{kimi_match})'
+
+    z_name_re = re.compile(
+        r'function Zp\(e\)\{(?:if\("opus\[1m\]"===e\?\.model\|\|"opus"===e\?\.model\)'
+        r'return"Opus 4\.7(?: ?1)?M";)?const t=Ct\(e\.model\);'
+    )
+    z_name_target = (
+        'function Zp(e){if("opus[1m]"===e?.model||"opus"===e?.model)'
+        'return"Opus 4.71M";const t=Ct(e.model);'
+    )
+
+    current_model_re = re.compile(
+        r'const K=e\.useCallback\(e=>null!==e&&M\.some\(t=>t\.model===e\),\[M\]\)\(S\)\?S:null,'
+        r'W=.*?,V=M\.find\(e=>e\.model===W\),G=.*?,'
+        r'X=e\.useMemo\(\(\)=>V\?Zp\(V\):G,\[V,G\]\),Q=Xe\(\)',
+        re.DOTALL,
+    )
+    current_model_target = (
+        'const K=e.useCallback(e=>null!==e&&M.some(t=>t.model===e),[M])(S)?S:null,'
+        'W=(e=>{const t=String(e??"").toLowerCase();'
+        'if(!e)return"opus[1m]";'
+        'if("kimi-for-coding"===t||"kimi-k2.6"===t)return"kimi-for-coding";'
+        'if("opus"===t||"opus[1m]"===t)return"opus[1m]";'
+        'const s=M.find(e=>String(e.model??"").toLowerCase()===t||String(e.name??"").toLowerCase()===t);'
+        'return s?s.model:(/kimi/i.test(String(e))&&/k2\\.6/i.test(String(e))?'
+        '(t==="kimi-k2.6"?"kimi-for-coding":e):"opus[1m]")'
+        '})(U??O??L??K??k),'
+        'V=M.find(e=>e.model===W),'
+        'G=V?null:("opus"===W||"opus[1m]"===W?"Opus 4.71M":'
+        '("kimi-for-coding"===W||/kimi/i.test(String(W))&&/k2\\.6/i.test(String(W))?"Kimi-k2.6":Ge(W))),'
+        'X=e.useMemo(()=>("kimi-for-coding"===W||/kimi/i.test(String(W))&&/k2\\.6/i.test(String(W)))?'
+        '"Kimi-k2.6":V?Zp(V):G,[V,G,W]),Q=Xe()'
+    )
+
+    model_items_res = [
+        re.compile(
+            r'pe=e\.useMemo\(\(\)=>\{const e=\{label:"Opus 4\.71M".*?return\[e,a\]\},\[M,W,ue,ie\]\)',
+            re.DOTALL,
+        ),
+        re.compile(
+            r'pe=e\.useMemo\(\(\)=>\{.*?\},\[M,C,W,ue,ie,oe,G,s\]\)',
+            re.DOTALL,
+        ),
+    ]
+    model_items_target = (
+        'pe=e.useMemo(()=>{'
+        'const i=e=>"kimi-for-coding"===String(e).toLowerCase()||/kimi/i.test(String(e))&&/k2\\.6/i.test(String(e)),'
+        'o=e=>{const t=String(e??"").toLowerCase();return"kimi-k2.6"===t?'
+        '"kimi-for-coding":(i(e)?e:"kimi-for-coding")},'
+        'e={label:"Opus 4.71M",checked:"opus"===W||"opus[1m]"===W,'
+        'onSelect:()=>ue.current("opus[1m]"),disabled:ie},'
+        't=M.find(e=>{const t=String(e.model??"").toLowerCase(),s=String(e.name??"").toLowerCase();'
+        'return"kimi-for-coding"===t||"kimi-for-coding"===s||"kimi-k2.6"===t||"kimi-k2.6"===s||/kimi.*k2\\.6/i.test(t)||/kimi.*k2\\.6/i.test(s)}),'
+        'n=t?.model??o(W),'
+        'a={label:"Kimi-k2.6",checked:String(W).toLowerCase()===String(n).toLowerCase()||i(W)&&i(n),'
+        'onSelect:()=>ue.current(n),disabled:ie};'
+        'return[e,a]},[M,W,ue,ie])'
+    )
+
+    effort_state_res = [
+        re.compile(
+            r'ms=Ct\.current!==fs&&void 0!==It\?It:Ee,hs=e\.useCallback\(e=>\{.*?\},'
+            r'\[ms,Ae,fs,cs,us,Z,ne,a,s\]\),',
+            re.DOTALL,
+        ),
+        re.compile(
+            r'\[codeEffort,setCodeEffort\]=e\.useState\(\(\)=>\{try\{return localStorage\.getItem\("epitaxy_effort_level"\)\|\|null\}catch\{return null\}\}\),'
+            r'ms=.*?hs=e\.useCallback\(t=>\{.*?\},\[ms,Ae,fs,cs,us,Z,ne,a,s\]\),',
+            re.DOTALL,
+        ),
+    ]
+    effort_state_target = (
+        '[codeEffort,setCodeEffort]=e.useState(()=>{try{return localStorage.getItem("epitaxy_effort_level")||null}catch{return null}}),'
+        'ms=codeEffort??(Ct.current!==fs&&void 0!==It?It:Ee),'
+        'hs=e.useCallback(t=>{if(t===ms)return;Ct.current=fs,setCodeEffort(t);'
+        'try{localStorage.setItem("epitaxy_effort_level",t)}catch{}'
+        'Ae(t);const e=e=>{a(s.formatMessage({defaultMessage:"Effort change couldn\'t be applied. You can try again.",id:"NiIv1JQ3Vw"}),'
+        '{error:e,errorContext:{tags:{source:"epitaxy_set_effort"}},messageForLogging:"Effort change couldn\'t be applied. You can try again."})};'
+        'us?Z(us)?.setEffort?.(us.id,t).then(()=>ne(us,{effort:t})).catch(e):'
+        'fs&&cs&&Promise.resolve(cs(fs,t)).then(()=>ne({id:fs,type:"local"},{effort:t})).catch(e)},'
+        '[ms,Ae,fs,cs,us,Z,ne,a,s]),'
+    )
+
+    effort_patterns = {
+        'ps=_e&&(t?!!fs:"bridge"!==is),ms=': f'ps={effort_support}&&(t?!!fs:"bridge"!==is),ms=',
+        'ps=(_e||"opus"===W||"opus[1m]"===W)&&(t?!!fs:"bridge"!==is),ms=': f'ps={effort_support}&&(t?!!fs:"bridge"!==is),ms=',
+        'ps=(_e||"opus"===W||"opus[1m]"===W||"Kimi-k2.6"===W)&&(t?!!fs:"bridge"!==is),ms=': f'ps={effort_support}&&(t?!!fs:"bridge"!==is),ms=',
+        'effort:_e?Te:void 0,repoInfo': f'effort:{effort_support}?ms:void 0,repoInfo',
+        'effort:(_e||"opus"===W||"opus[1m]"===W)?Te:void 0,repoInfo': f'effort:{effort_support}?ms:void 0,repoInfo',
+        'effort:(_e||"opus"===W||"opus[1m]"===W||"Kimi-k2.6"===W)?Te:void 0,repoInfo': f'effort:{effort_support}?ms:void 0,repoInfo',
+        'effort:(_e||"opus"===W||"opus[1m]"===W||/kimi/i.test(String(W))&&/k2\\.6/i.test(String(W)))?Te:void 0,repoInfo': f'effort:{effort_support}?ms:void 0,repoInfo',
+        f'effort:{effort_support}?Te:void 0,repoInfo': f'effort:{effort_support}?ms:void 0,repoInfo',
+        'const t=Ud.filter(e=>("max"!==e||De)&&("xhigh"!==e||ze));': (
+            'const t=("opus"===W||"opus[1m]"===W||"kimi-for-coding"===W||/kimi/i.test(String(W))&&/k2\\.6/i.test(String(W)))'
+            '?["low","medium","high","xhigh","max"]:Ud.filter(e=>("max"!==e||De)&&("xhigh"!==e||ze));'
+        ),
+        'const t=("opus"===W||"opus[1m]"===W||/kimi/i.test(String(W))&&/k2\\.6/i.test(String(W)))?Ud:Ud.filter(e=>("max"!==e||De)&&("xhigh"!==e||ze));': (
+            'const t=("opus"===W||"opus[1m]"===W||"kimi-for-coding"===W||/kimi/i.test(String(W))&&/k2\\.6/i.test(String(W)))'
+            '?["low","medium","high","xhigh","max"]:Ud.filter(e=>("max"!==e||De)&&("xhigh"!==e||ze));'
+        ),
+        'const t=("opus"===W||"opus[1m]"===W||"kimi-for-coding"===W||/kimi/i.test(String(W))&&/k2\\.6/i.test(String(W)))?["low","medium","high","xhigh","max"]:Ud.filter(e=>("max"!==e||De)&&("xhigh"!==e||ze));': (
+            'const t=("opus"===W||"opus[1m]"===W||"kimi-for-coding"===W||/kimi/i.test(String(W))&&/k2\\.6/i.test(String(W)))'
+            '?["low","medium","high","xhigh","max"]:Ud.filter(e=>("max"!==e||De)&&("xhigh"!==e||ze));'
+        ),
+        '[ps,De,ze,ms,hs,os,ls,Ie,Pe,s])': '[ps,De,ze,ms,hs,os,ls,Ie,Pe,s,W])',
+    }
+
+    for path in sorted(assets_dir.glob("*.js")):
+        text = path.read_text(encoding="utf-8")
+        if "function em(t){const s=i()" not in text or "modelExtraSections:gs" not in text:
+            continue
+        patched = text
+        count = 0
+        patched, n = z_name_re.subn(z_name_target, patched, count=1)
+        count += n
+        patched, n = current_model_re.subn(current_model_target, patched, count=1)
+        count += n
+        for model_items_re in model_items_res:
+            patched, n = model_items_re.subn(model_items_target, patched, count=1)
+            count += n
+            if n:
+                break
+        for effort_state_re in effort_state_res:
+            patched, n = effort_state_re.subn(effort_state_target, patched, count=1)
+            count += n
+            if n:
+                break
+        for source, target in effort_patterns.items():
+            occurrences = patched.count(source)
+            if occurrences:
+                patched = patched.replace(source, target)
+                count += occurrences
+        if patched != text:
+            path.write_text(patched, encoding="utf-8")
+            patched_files += 1
+            patched_strings += count
+
+    return patched_files, patched_strings
 
 
 def align4(value: int) -> int:
@@ -563,6 +863,10 @@ def patch_custom3p_model_validation(app: Path) -> bool:
         raise SystemExit(f"Unsupported app.asar file bounds for {ASAR_PATCH_TARGET}.")
 
     content = bytes(data[content_offset:content_end])
+    if content.count(patched) == 1:
+        print("Custom 3P model-name validation already patched in app.asar")
+        return True
+
     count = content.count(anchor)
     if count != 1:
         print(
