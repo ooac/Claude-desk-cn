@@ -343,6 +343,17 @@ def patch_hardcoded_frontend_strings(app: Path) -> None:
         'Mi("cc-landing-draft-permission-mode","acceptEdits",!1)': 'Mi("cc-landing-draft-permission-mode-cn","bypassPermissions",!1)',
         'Ld("epitaxy-folder-permission-mode",Kp,{scope:"account"})': 'Ld("epitaxy-folder-permission-mode-cn",Kp,{scope:"account"})',
         'yc("baku_model","model","claude-sonnet-4-6",l())': 'yc("baku_model","model","opus[1m]",l())',
+        'c=yc(e,"model","claude-sonnet-4-5-20250929",l()),': 'c=(e=>e==="kimi-for-coding"?"opus[1m]":e)(yc(e,"model","opus[1m]",l())),',
+        'i=yc("baku_model","model","opus[1m]",l()),o=$u(()=>null,null)||i;': 'i=yc("baku_model","model","opus[1m]",l()),o=(e=>e==="kimi-for-coding"?"opus[1m]":e)($u(()=>null,null)||i);',
+        'R=N,O=I': 'R=(e=>e==="kimi-for-coding"?"opus[1m]":e)(N),O=I',
+        'F=z?.sessionData?.session_context?.model??null,': 'F=(e=>e==="kimi-for-coding"?"opus[1m]":e)(z?.sessionData?.session_context?.model??null),',
+        'return t.sessionModel??t.sessionData?.session_context?.model})??null': 'return(e=>e==="kimi-for-coding"?"opus[1m]":e)(t.sessionModel??t.sessionData?.session_context?.model)})??null',
+        'const n=s.find(t=>t.model===e),r=(n?.thinking_modes??[]).map': 'const n=s.find(t=>t.model===e)??(("opus"===e||"opus[1m]"===e)?s.find(e=>"opus[1m]"===e.model)??s.find(e=>/opus/i.test(e.model)&&/\\[1m\\]/i.test(e.model))??s.find(e=>e.thinking_modes?.length):void 0),r=(n?.thinking_modes??[]).map',
+        'W||(W=F.find(e=>e.model===L)??sgt);': 'W||(W=F.find(e=>e.model===L)??(("opus"===V||"opus[1m]"===V||"opus"===L||"opus[1m]"===L)?{model:"opus[1m]",name:"Opus 4.7 1M",inactive:!1,overflow:!1}:sgt));',
+        'W||(W=F.find(e=>e.model===L)??(("opus"===V||"opus[1m]"===V||"opus"===L||"opus[1m]"===L)?{model:"opus[1m]",name:"Opus 4.7 1M",inactive:!1,overflow:!1}:sgt));const G=': 'W||(W=F.find(e=>e.model===L)??(("opus"===V||"opus[1m]"===V||"opus"===L||"opus[1m]"===L)?{model:"opus[1m]",name:"Opus 4.7 1M",inactive:!1,overflow:!1}:sgt));\"\"===Vft(W)&&(W={model:\"opus[1m]\",name:\"Opus 4.7 1M\",inactive:!1,overflow:!1});const G=',
+        'z=r??A,{allModelOptions:F,mainModels:U,overflowModels:q}=R': 'z=(e=>e==="kimi-for-coding"?"opus[1m]":e)(r??A),{allModelOptions:F,mainModels:U,overflowModels:q}=R',
+        'const Wft=({model:e,compact:t=!1,thinkingLabel:s})=>{const n=Vft(e,{mutedSuffix:!0});return': 'const Wft=({model:e,compact:t=!1,thinkingLabel:s})=>{let n=Vft(e,{mutedSuffix:!0});""===n&&(n="Opus 4.7 1M");return',
+        'function Vft(e,t={}){const s=e.model?Z9(e.model):null;': 'function Vft(e,t={}){if("opus[1m]"===e?.model||"opus"===e?.model)return"Opus 4.7 1M";const s=e.model?Z9(e.model):null;',
         '"Scheduled"': '"定时任务"',
         '"Pinned"': '"已固定"',
         '"What’s up next?"': '"接下来做什么？"',
@@ -399,6 +410,8 @@ def patch_hardcoded_frontend_strings(app: Path) -> None:
         'const l=s.find(e=>"opus[1m]"===e.model)??s.find(e=>/opus/i.test(e.model)&&/\\[1m\\]/i.test(e.model))??'
         's.find(e=>e.thinking_modes?.length)??s[0];'
         'e=[{...l,model:"opus[1m]",name:"Opus 4.7 1M",name_i18n_key:void 0,inactive:!1,overflow:!1},...e]}'
+        'if(c&&!e.some(e=>e.model===c)){const m=s.find(e=>e.model===c)??s.find(e=>e.thinking_modes?.length)??s[0];'
+        'e=[{...m,model:c,name:m?.name??tee(c),name_i18n_key:void 0,inactive:!1,overflow:!1},...e]}'
         'const n=e.some(e=>e.model===c);'
     )
     for path in sorted(assets_dir.glob("*.js")):
@@ -419,6 +432,8 @@ def patch_hardcoded_frontend_strings(app: Path) -> None:
         'const n=e.find(e=>"opus[1m]"===e.model)??e.find(e=>/opus/i.test(e.model)&&/\\[1m\\]/i.test(e.model))??'
         'e.find(e=>e.thinking_modes?.length)??e[0];'
         'c=[{...n,model:"opus[1m]",name:"Opus 4.7 1M",name_i18n_key:void 0,inactive:!1,overflow:!1},...c]}'
+        'if(o&&!c.some(e=>e.model===o)){const d=e.find(e=>e.model===o)??e.find(e=>e.thinking_modes?.length)??e[0];'
+        'c=[{...d,model:o,name:d?.name??tee(o),name_i18n_key:void 0,inactive:!1,overflow:!1},...c]}'
         'const d=c.some(e=>e.model===o);'
     )
     for path in sorted(assets_dir.glob("*.js")):
@@ -828,6 +843,29 @@ def set_user_locale(user_home: Path) -> None:
     set_app_language_defaults(user_home)
 
 
+def clear_frontend_cache(user_home: Path, dry_run: bool) -> None:
+    cache_names = ["Cache", "Code Cache", "GPUCache", "Service Worker", "DawnCache", "ShaderCache"]
+    stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+    moved = 0
+    for support_dir in ["Claude", "Claude-3p"]:
+        base = user_home / f"Library/Application Support/{support_dir}"
+        trash_dir = user_home / ".Trash" / f"{support_dir}-frontend-cache-{stamp}"
+        for name in cache_names:
+            path = base / name
+            if not path.exists():
+                continue
+            target = trash_dir / name
+            if dry_run:
+                print(f"[dry-run] Would move frontend cache to trash: {path} -> {target}")
+                moved += 1
+                continue
+            trash_dir.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(path), str(target))
+            moved += 1
+    if moved:
+        print(f"Cleared {moved} frontend cache folder(s)")
+
+
 def backup_and_replace(original: Path, patched: Path, dry_run: bool) -> Path:
     stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
     backup = original.with_name(f"Claude.backup-before-zh-CN-{stamp}.app")
@@ -941,6 +979,7 @@ def main() -> int:
         print(f"[dry-run] Would set Claude config locale under: {args.user_home}")
     else:
         set_user_locale(args.user_home)
+        clear_frontend_cache(args.user_home, args.dry_run)
     verify(patched_app)
 
     backup = backup_and_replace(args.app, patched_app, args.dry_run)

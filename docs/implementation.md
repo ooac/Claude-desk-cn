@@ -177,6 +177,20 @@ if ((e === "opus" || e === "opus[1m]") && t.length > 0) return e;
 
 强度菜单不是单独的静态文案，而是读取模型候选项上的能力元数据生成。因此固定 Opus 项不能只写 `{ model, name }`，必须保留 `thinking_modes` 等字段。当前实现会从网关返回的模型列表中寻找可复用的 Opus 或支持思考模式的模型项作为模板，再生成固定的 `Opus 4.7 1M` 入口。
 
+底部模型按钮的强度标签还会走另一处 `Gft()` 模式读取逻辑，它读取的是原始 `allModelOptions`，不一定包含固定注入后的 `opus[1m]`。因此补丁也会让 `Gft()` 在当前模型为 `opus` / `opus[1m]` 且原始列表找不到时，回退到带 `thinking_modes` 的模型模板，保证 `Opus 4.7 1M · 高` 这类显示不丢失。
+
+底部触发器本身也有显示对象兜底：如果当前模型或默认模型指向 Opus，但候选列表暂时没有对应显示项，会临时使用 `{ model: "opus[1m]", name: "Opus 4.7 1M" }` 渲染按钮，防止只剩强度标签。
+
+最终渲染前还会检查 `Vft(W)` 的结果。如果显示名为空，会兜底使用 `Opus 4.7 1M`，保留原本计算出来的强度标签，避免再次出现只有 `· 高` 的状态。
+
+模型按钮组件 `Wft()` 内部也有同样兜底：如果格式化结果为空，直接渲染 `Opus 4.7 1M`。
+
+模型名格式化函数 `Vft()` 也会把 `opus` / `opus[1m]` 直接显示为 `Opus 4.7 1M`，避免部分普通对话入口绕过候选项名称后又显示原始 id。
+
+如果父组件传入的 `contextModel` 还是旧 `kimi-for-coding`，模型选择器内部也会先归一为 `opus[1m]`，再去计算显示名和强度模式。
+
+早期补丁曾把默认模型写成 `kimi-for-coding`。这个值在新网关列表中通常不存在，会导致前端拿不到当前模型的显示名，只剩下强度标签。当前实现会在默认值、sticky model 和会话上下文三处把旧的 `kimi-for-coding` 归一为 `opus[1m]`，并在候选列表中补入当前模型项。这样旧 sticky model 不会继续造成空白按钮，而 `Kimi-k2.6`、DeepSeek 等真实第三方直选项仍可正常显示。
+
 ### 7. 可选的第三方模型校验补丁
 
 脚本包含 `patch_custom3p_model_validation()`，尝试修改 `app.asar` 中的第三方模型名校验逻辑。
@@ -290,6 +304,8 @@ en-US
 ```
 
 脚本只保留最新一个中文补丁备份，旧的 `Claude.backup-before-zh-CN-*.app` 会移动到当前用户废纸篓中的 `Claude-old-backups-*` 目录，避免 `/Applications` 长期堆积多个 Claude 副本。
+
+安装时还会移动 `Cache`、`Code Cache`、`GPUCache`、`Service Worker` 等前端缓存目录到废纸篓。原因是 Claude Desktop 的 Electron 前端可能继续使用旧 bundle 缓存，导致补丁已经写入 app 后，模型按钮或菜单仍显示旧状态。
 
 如果需要恢复，只要退出 Claude，删除当前 `/Applications/Claude.app`，再把备份改名为 `Claude.app` 放回 `/Applications` 即可。
 
