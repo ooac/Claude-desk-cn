@@ -369,11 +369,11 @@ def patch_hardcoded_frontend_strings(app: Path) -> None:
 
     model_alias_re = re.compile(
         r'function eee\(e,t\)\{if\(!e\)return null;if\(t\.includes\(e\)\)return e;'
-        r'(?:if\(\(e==="opus"\|\|e==="opus\[1m\]"\)&&t\.includes\("kimi-for-coding"\)\)return(?:"kimi-for-coding"|e);)*'
+        r'(?:if\(\(e==="opus"\|\|e==="opus\[1m\]"\)&&(?:t\.includes\("kimi-for-coding"\)|t\.length>0)\)return\s*(?:"kimi-for-coding"|e);)*'
     )
     model_alias_target = (
         'function eee(e,t){if(!e)return null;if(t.includes(e))return e;'
-        'if((e==="opus"||e==="opus[1m]")&&t.includes("kimi-for-coding"))return e;'
+        'if((e==="opus"||e==="opus[1m]")&&t.length>0)return e;'
     )
     for path in sorted(assets_dir.glob("*.js")):
         text = path.read_text(encoding="utf-8")
