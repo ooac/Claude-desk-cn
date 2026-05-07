@@ -342,7 +342,6 @@ def patch_hardcoded_frontend_strings(app: Path) -> None:
         'Ld("cc-landing-draft-permission-mode","acceptEdits")': 'Ld("cc-landing-draft-permission-mode-cn","bypassPermissions")',
         'Mi("cc-landing-draft-permission-mode","acceptEdits",!1)': 'Mi("cc-landing-draft-permission-mode-cn","bypassPermissions",!1)',
         'Ld("epitaxy-folder-permission-mode",Kp,{scope:"account"})': 'Ld("epitaxy-folder-permission-mode-cn",Kp,{scope:"account"})',
-        'function eee(e,t){if(!e)return null;if(t.includes(e))return e;': 'function eee(e,t){if(!e)return null;if(t.includes(e))return e;if((e==="opus"||e==="opus[1m]")&&t.includes("kimi-for-coding"))return"kimi-for-coding";',
         '"Scheduled"': '"定时任务"',
         '"Pinned"': '"已固定"',
         '"What’s up next?"': '"接下来做什么？"',
@@ -364,6 +363,22 @@ def patch_hardcoded_frontend_strings(app: Path) -> None:
                 patched = patched.replace(source, target)
                 count += occurrences
         if patched != text:
+            path.write_text(patched, encoding="utf-8")
+            patched_files += 1
+            patched_strings += count
+
+    model_alias_re = re.compile(
+        r'function eee\(e,t\)\{if\(!e\)return null;if\(t\.includes\(e\)\)return e;'
+        r'(?:if\(\(e==="opus"\|\|e==="opus\[1m\]"\)&&t\.includes\("kimi-for-coding"\)\)return(?:"kimi-for-coding"|e);)*'
+    )
+    model_alias_target = (
+        'function eee(e,t){if(!e)return null;if(t.includes(e))return e;'
+        'if((e==="opus"||e==="opus[1m]")&&t.includes("kimi-for-coding"))return e;'
+    )
+    for path in sorted(assets_dir.glob("*.js")):
+        text = path.read_text(encoding="utf-8")
+        patched, count = model_alias_re.subn(model_alias_target, text)
+        if count and patched != text:
             path.write_text(patched, encoding="utf-8")
             patched_files += 1
             patched_strings += count
