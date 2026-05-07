@@ -61,6 +61,7 @@ sudo /usr/bin/python3 patch_claude_zh_cn.py --user-home "$HOME" --launch
 
 - `install.command`：Mac 双击安装入口。
 - `patch_claude_zh_cn.py`：执行补丁、备份、重签名和验证的主脚本。
+- `docs/implementation.md`：当前功能、实现原理和维护逻辑说明。
 - `resources/frontend-zh-CN.json`：前端界面中文翻译。
 - `resources/desktop-zh-CN.json`：桌面壳层中文翻译。
 - `resources/Localizable.strings`：macOS 原生菜单中文资源。
