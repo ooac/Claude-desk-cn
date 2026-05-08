@@ -22,6 +22,10 @@
 - 修改后对 Claude.app 及内部组件做一致的本机 ad-hoc 重签名。
 - 清除 `com.apple.quarantine` 隔离属性，减少“应用损坏”类提示。
 - 兼容第三方网关：保留 Claude Code 默认模型 `opus[1m]`，并在前端模型识别层兼容第三方网关返回的模型列表。
+- 固定 Cowork 和 Code 模型菜单：`Opus 4.71M` 是伪装入口，`Kimi-k2.6` 是真实入口。
+- Cowork 和 Code 均显示五档强度：`低 / 中 / 高 / 超高 / 最大`，默认强度为 `高`。
+- Claude Code 新建会话默认权限模式为 `绕过权限`，并隔离官方旧缓存里的 `接受编辑`。
+- 生成安装诊断日志，升级后补丁点失效会中止安装，避免替换成半残 Claude.app。
 
 ## 安装方法
 
@@ -46,6 +50,35 @@ cd /path/to/Claude-desk-cn
 sudo /usr/bin/python3 patch_claude_zh_cn.py --user-home "$HOME" --launch
 ```
 
+## 诊断模式
+
+如果升级 Claude 或复制到其他电脑后出现 `Legacy Model`、只能看到模型不能看到强度、只能看到 `· 高`、Kimi 不能选择、默认权限又变成 `接受编辑` 等问题，先运行只读诊断：
+
+```bash
+cd /path/to/Claude-desk-cn
+/usr/bin/python3 patch_claude_zh_cn.py --diagnose --app /Applications/Claude.app
+```
+
+诊断不会修改 Claude.app，会写入：
+
+```text
+Logs/latest.json
+Logs/patch-report-YYYYMMDD-HHMMSS.json
+```
+
+`Logs/` 就在本项目目录里，和 `install.command` 同级。其他电脑出问题时，直接把这个文件夹发出来即可。日志只记录 Claude 版本、bundle 文件名、补丁点命中状态、JS 语法检查和签名状态，不记录 API Key、token 或对话内容。安装流程也会写同样的日志；如果 Cowork/Code 必要补丁点没命中，脚本会中止安装并保留原 Claude.app。
+
+## 已实现能力与注意事项速览
+
+- `Opus 4.71M` 是伪装入口，实际 model id 固定为 `opus[1m]`，用于保留 Claude Code 依赖 Opus 名称开启的能力。
+- `Kimi-k2.6` 是真实入口，优先使用网关返回的真实 Kimi id，找不到时兜底为 `kimi-for-coding`。
+- Cowork 和 Code 都必须固定显示两个模型入口，并显示五档强度：`低 / 中 / 高 / 超高 / 最大`，默认强度是 `高`。
+- Code 新建会话默认权限模式是 `绕过权限`。如果其他电脑又显示 `接受编辑`，先看 `Logs/latest.json` 里的 `code.permission_default_bypass`。
+- 复制到其他电脑时，推荐复制本项目并在目标电脑重新运行 `install.command`，不要直接复制已经补丁过的 `/Applications/Claude.app`。
+- Claude Desktop 每次更新后都要重新运行补丁；如果新版 bundle 结构变化，安装会因 invariant 失败而中止，不会覆盖成半残 app。
+- `api.kimi.com` 健康横幅补丁只隐藏旧健康检查误报，不保证第三方网关真实请求一定成功；真实请求仍由网关配置、网络和上游模型决定。
+- 出现异常时先运行 `--diagnose`，把项目根目录里的 `Logs/` 发回来，比截图更容易定位是哪一个补丁点失效。
+
 ## 复制到其他电脑使用
 
 复制整个项目文件夹即可。至少需要保留：
@@ -62,6 +95,7 @@ sudo /usr/bin/python3 patch_claude_zh_cn.py --user-home "$HOME" --launch
 - `install.command`：Mac 双击安装入口。
 - `patch_claude_zh_cn.py`：执行补丁、备份、重签名和验证的主脚本。
 - `docs/implementation.md`：当前功能、实现原理和维护逻辑说明。
+- `Logs/`：安装和诊断日志目录，运行脚本后自动生成，不提交到 Git。
 - `resources/frontend-zh-CN.json`：前端界面中文翻译。
 - `resources/desktop-zh-CN.json`：桌面壳层中文翻译。
 - `resources/Localizable.strings`：macOS 原生菜单中文资源。
@@ -148,6 +182,12 @@ Code 页面模型菜单固定为两项：`Opus 4.71M` 和 `Kimi-k2.6`。`Opus 4.
 默认对话和 Claude Code 使用不同的模型列表逻辑。本项目会同时补丁这两条路径，避免默认对话回落到 `Sonnet 4.6`。
 
 底部模型按钮和强度标签也会一起兼容固定 Opus，避免只显示模型或只显示强度。Code 页面会保留完整强度菜单：`低 / 中 / 高 / 超高 / 最大`。
+
+Cowork 页面同样固定显示两项模型和五档强度。强度默认值是 `高`；如果之前已经选择过 Cowork 强度，会优先使用本机保存的 `cowork_effort_level`。切换 `Kimi-k2.6` 或切回 `Opus 4.71M` 不会清空强度菜单。
+
+Claude Desktop 更新后需要重新运行补丁。每次适配新版都会重点回归 Cowork 和 Code 两个模型菜单：不能出现 `Legacy Model`，不能只剩 `· 高` 这类空模型按钮，`Kimi-k2.6` 必须可选，五档强度必须都能点击。
+
+Claude Code 新建会话的权限模式默认是 `绕过权限`。脚本会把新版前端里的 `cc-landing-draft-permission-mode` 和 `epitaxy-folder-permission-mode` 改为补丁专用键，避免其他电脑或旧缓存继续沿用官方默认 `接受编辑`。诊断日志里会检查 `code.permission_default_bypass`，这项失败时说明权限默认值补丁没有命中。
 
 普通默认对话里的旧 `kimi-for-coding` 默认值会归一为 `opus[1m]`，避免模型按钮变成空白。Code 页面里直接选择 `Kimi-k2.6` 时，会写入真实 Kimi id，不再把显示名 `Kimi-k2.6` 当作请求模型名。
 

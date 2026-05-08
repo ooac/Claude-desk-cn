@@ -17,6 +17,7 @@ Run from this folder:
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass, field
 import datetime as dt
 import hashlib
 import json
@@ -47,10 +48,73 @@ FRONTEND_ASSETS_REL = Path("Contents/Resources/ion-dist/assets/v1")
 DESKTOP_RESOURCES_REL = Path("Contents/Resources")
 ASAR_PATCH_TARGET = ".vite/build/index.js"
 ASAR_INTEGRITY_BLOCK_SIZE = 4 * 1024 * 1024
+REPORT_DIR = ROOT / "Logs"
 
 LANG_LIST_RE = re.compile(
     r'\["en-US","de-DE","fr-FR","ko-KR","ja-JP","es-419","es-ES","it-IT","hi-IN","pt-BR","id-ID"(.*?)\]'
 )
+
+
+@dataclass
+class PatchEvent:
+    name: str
+    status: str
+    message: str = ""
+    file: str | None = None
+    count: int | None = None
+    required: bool = False
+
+
+@dataclass
+class PatchReport:
+    app: str
+    claude_version: str
+    mode: str
+    started_at: str = field(default_factory=lambda: dt.datetime.now().isoformat(timespec="seconds"))
+    events: list[PatchEvent] = field(default_factory=list)
+
+    def add(
+        self,
+        name: str,
+        status: str,
+        message: str = "",
+        *,
+        file: Path | str | None = None,
+        count: int | None = None,
+        required: bool = False,
+    ) -> None:
+        self.events.append(
+            PatchEvent(
+                name=name,
+                status=status,
+                message=message,
+                file=Path(file).name if isinstance(file, Path) else file,
+                count=count,
+                required=required,
+            )
+        )
+
+    def has_required_failures(self) -> bool:
+        return any(event.required and event.status in {"missing", "failed"} for event in self.events)
+
+    def to_dict(self) -> dict[str, Any]:
+        counts: dict[str, int] = {}
+        for event in self.events:
+            counts[event.status] = counts.get(event.status, 0) + 1
+        return {
+            "app": self.app,
+            "claude_version": self.claude_version,
+            "mode": self.mode,
+            "started_at": self.started_at,
+            "finished_at": dt.datetime.now().isoformat(timespec="seconds"),
+            "summary": counts,
+            "required_failures": [
+                event.__dict__
+                for event in self.events
+                if event.required and event.status in {"missing", "failed"}
+            ],
+            "events": [event.__dict__ for event in self.events],
+        }
 
 
 def run(cmd: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -69,6 +133,79 @@ def save_json(path: Path, data: Any) -> None:
         json.dump(data, f, ensure_ascii=False, indent=2)
         f.write("\n")
     os.replace(tmp, path)
+
+
+def get_claude_version(app: Path) -> str:
+    info_plist = app / "Contents/Info.plist"
+    if not info_plist.exists():
+        return "unknown"
+    try:
+        with info_plist.open("rb") as f:
+            info = plistlib.load(f)
+        return str(info.get("CFBundleShortVersionString") or info.get("CFBundleVersion") or "unknown")
+    except Exception:
+        return "unknown"
+
+
+def write_patch_report(report: PatchReport) -> Path:
+    report_dir = REPORT_DIR
+    report_dir.mkdir(parents=True, exist_ok=True)
+    stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+    data = report.to_dict()
+    report_path = report_dir / f"patch-report-{stamp}.json"
+    latest_path = report_dir / "latest.json"
+    save_json(report_path, data)
+    save_json(latest_path, data)
+    sudo_uid = os.environ.get("SUDO_UID")
+    sudo_gid = os.environ.get("SUDO_GID")
+    if sudo_uid and sudo_gid:
+        for path in [report_dir, report_path, latest_path]:
+            try:
+                os.chown(path, int(sudo_uid), int(sudo_gid))
+            except PermissionError:
+                pass
+    print(f"Patch report written: {latest_path}")
+    return latest_path
+
+
+def find_frontend_bundles(app: Path) -> dict[str, Path | None]:
+    assets_dir = app / FRONTEND_ASSETS_REL
+    result: dict[str, Path | None] = {"index": None, "code": None}
+    if not assets_dir.exists():
+        return result
+    for path in sorted(assets_dir.glob("*.js")):
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        if result["index"] is None and "const Jbt=({conversationUuid" in text:
+            result["index"] = path
+        if result["code"] is None and 'const um="ccd-effort-level"' in text and "modelExtraSections:xs" in text:
+            result["code"] = path
+    return result
+
+
+def check_js_syntax(path: Path) -> tuple[bool, str]:
+    if not shutil.which("node"):
+        return False, "node command not found"
+    result = run(["node", "--check", str(path)], check=False)
+    return result.returncode == 0, result.stdout.strip()
+
+
+def check_custom3p_validation_patched(app: Path) -> bool:
+    path = app / APP_ASAR_REL
+    if not path.exists():
+        return False
+    try:
+        data = path.read_bytes()
+        header_size, _header_string, header = read_asar_header(data, path)
+        entry = get_asar_file_entry(header, ASAR_PATCH_TARGET)
+        content_offset = 8 + header_size + int(entry["offset"])
+        content_size = int(entry["size"])
+        content = data[content_offset : content_offset + content_size]
+    except Exception:
+        return False
+    return (
+        b"const Hte=false" in content
+        or b"function _Zt(e,A){return null;" in content
+    )
 
 
 def require_file(path: Path) -> None:
@@ -341,7 +478,10 @@ def patch_hardcoded_frontend_strings(app: Path) -> None:
         'defaultMessage:"Settings default model not recognized"': 'defaultMessage:"设置中的默认模型无法识别"',
         'Ld("cc-landing-draft-permission-mode","acceptEdits")': 'Ld("cc-landing-draft-permission-mode-cn","bypassPermissions")',
         'Mi("cc-landing-draft-permission-mode","acceptEdits",!1)': 'Mi("cc-landing-draft-permission-mode-cn","bypassPermissions",!1)',
+        'fc("cc-landing-draft-permission-mode","acceptEdits")': 'fc("cc-landing-draft-permission-mode-cn","bypassPermissions")',
+        'Ks("cc-landing-draft-permission-mode","acceptEdits",!1)': 'Ks("cc-landing-draft-permission-mode-cn","bypassPermissions",!1)',
         'Ld("epitaxy-folder-permission-mode",Kp,{scope:"account"})': 'Ld("epitaxy-folder-permission-mode-cn",Kp,{scope:"account"})',
+        'fc("epitaxy-folder-permission-mode",Rm,{scope:"account"})': 'fc("epitaxy-folder-permission-mode-cn",Rm,{scope:"account"})',
         'yc("baku_model","model","claude-sonnet-4-6",l())': 'yc("baku_model","model","opus[1m]",l())',
         'c=yc(e,"model","claude-sonnet-4-5-20250929",l()),': 'c=(e=>e==="kimi-for-coding"?"opus[1m]":e)(yc(e,"model","opus[1m]",l())),',
         'i=yc("baku_model","model","opus[1m]",l()),o=$u(()=>null,null)||i;': 'i=yc("baku_model","model","opus[1m]",l()),o=(e=>e==="kimi-for-coding"?"opus[1m]":e)($u(()=>null,null)||i);',
@@ -353,12 +493,12 @@ def patch_hardcoded_frontend_strings(app: Path) -> None:
         'W||(W=F.find(e=>e.model===L)??(("opus"===V||"opus[1m]"===V||"opus"===L||"opus[1m]"===L)?{model:"opus[1m]",name:"Opus 4.71M",inactive:!1,overflow:!1}:sgt));const G=': 'W||(W=F.find(e=>e.model===L)??(("opus"===V||"opus[1m]"===V||"opus"===L||"opus[1m]"===L)?{model:"opus[1m]",name:"Opus 4.71M",inactive:!1,overflow:!1}:sgt));(\"\"===Vft(W)||\"opus\"===V||\"opus[1m]\"===V||\"opus\"===L||\"opus[1m]\"===L)&&(W={...W,model:\"opus[1m]\",name:\"Opus 4.71M\",inactive:!1,overflow:!1});const G=',
         '""===Vft(W)&&(W={model:"opus[1m]",name:"Opus 4.7 1M",inactive:!1,overflow:!1});const G=': '(""===Vft(W)||"opus"===V||"opus[1m]"===V||"opus"===L||"opus[1m]"===L)&&(W={...W,model:"opus[1m]",name:"Opus 4.71M",inactive:!1,overflow:!1});const G=',
         'z=r??A,{allModelOptions:F,mainModels:U,overflowModels:q}=R': 'z=(e=>e==="kimi-for-coding"?"opus[1m]":e)(r??A),{allModelOptions:F,mainModels:U,overflowModels:q}=R',
-        '{activeMode:te}=Gft(z,Z),se=O?void 0:te?.label,{toggleConversationSetting:ne}=O6({source:"modelSelector"})': '{activeMode:te}=Gft(z,Z),[me,he]=n.useState(()=>{try{return localStorage.getItem("cowork_effort_level")||"medium"}catch{return"medium"}}),fe=n.useMemo(()=>_??{current:me,options:[{value:"low",label:"低"},{value:"medium",label:"中"},{value:"high",label:"高"},{value:"xhigh",label:"超高"},{value:"max",label:"最大"}],onSelect:e=>{he(e);try{localStorage.setItem("cowork_effort_level",e),window.dispatchEvent(new CustomEvent("cowork-effort-change",{detail:e}))}catch{}}},[_,me]),se=O?{low:"低",medium:"中",high:"高",xhigh:"超高",max:"最大"}[me]:te?.label,{toggleConversationSetting:ne}=O6({source:"modelSelector"})',
+        '{activeMode:te}=Gft(z,Z),se=O?void 0:te?.label,{toggleConversationSetting:ne}=O6({source:"modelSelector"})': '{activeMode:te}=Gft(z,Z),[me,he]=n.useState(()=>{try{return localStorage.getItem("cowork_effort_level")||"high"}catch{return"high"}}),fe=n.useMemo(()=>_??{current:me,options:[{value:"low",label:"低"},{value:"medium",label:"中"},{value:"high",label:"高"},{value:"xhigh",label:"超高"},{value:"max",label:"最大"}],onSelect:e=>{he(e);try{localStorage.setItem("cowork_effort_level",e),window.dispatchEvent(new CustomEvent("cowork-effort-change",{detail:e}))}catch{}}},[_,me]),se=O?{low:"低",medium:"中",high:"高",xhigh:"超高",max:"最大"}[me]:te?.label,{toggleConversationSetting:ne}=O6({source:"modelSelector"})',
         '_&&a.jsxs(a.Fragment,{children:[a.jsx(ol,{className:IR}),a.jsx("div",{className:"text-xs text-text-500 pt-2 pb-1 px-2",children:a.jsx(c,{defaultMessage:"强度",id:"VKZ/U8vAsk"})}),a.jsx(igt,{section:_,compactMenu:j})]})': 'fe&&a.jsxs(a.Fragment,{children:[a.jsx(ol,{className:IR}),a.jsx("div",{className:"text-xs text-text-500 pt-2 pb-1 px-2",children:a.jsx(c,{defaultMessage:"强度",id:"VKZ/U8vAsk"})}),a.jsx(igt,{section:fe,compactMenu:j})]})',
         'fe&&a.jsxs(a.Fragment,{children:[a.jsx(ol,{className:IR}),a.jsx("div",{className:"text-xs text-text-500 pt-2 pb-1 px-2",children:a.jsx(c,{defaultMessage:"强度",id:"VKZ/U8vAsk"})}),a.jsx(igt,{section:fe,compactMenu:j})]})': 'a.jsxs(a.Fragment,{children:[a.jsx(ol,{className:IR}),a.jsx("div",{className:"text-xs text-text-500 pt-2 pb-1 px-2",children:a.jsx(c,{defaultMessage:"强度",id:"VKZ/U8vAsk"})}),a.jsx(igt,{section:{current:me,options:[{value:"low",label:"低"},{value:"medium",label:"中"},{value:"high",label:"高"},{value:"xhigh",label:"超高"},{value:"max",label:"最大"}],onSelect:e=>{he(e);try{localStorage.setItem("cowork_effort_level",e),window.dispatchEvent(new CustomEvent("cowork-effort-change",{detail:e}))}catch{}}},compactMenu:j})]})',
         'const Wft=({model:e,compact:t=!1,thinkingLabel:s})=>{const n=Vft(e,{mutedSuffix:!0});return': 'const Wft=({model:e,compact:t=!1,thinkingLabel:s})=>{let n=Vft(e,{mutedSuffix:!0});""===n&&(n="Opus 4.71M");return',
         'function Vft(e,t={}){const s=e.model?Z9(e.model):null;': 'function Vft(e,t={}){if("opus[1m]"===e?.model||"opus"===e?.model)return"Opus 4.71M";const s=e.model?Z9(e.model):null;',
-        'j=pc("cowork_effort_level","medium",Wu),M=pc("cowork_model",vJt,yJt),': 'j=(()=>{const e=pc("cowork_effort_level","medium",Wu),[t,s]=n.useState(()=>{try{return localStorage.getItem("cowork_effort_level")||e}catch{return e}});return n.useEffect(()=>{const e=()=>{try{s(localStorage.getItem("cowork_effort_level")||"medium")}catch{s("medium")}};if("undefined"==typeof window)return;e();return window.addEventListener("cowork-effort-change",e),()=>window.removeEventListener("cowork-effort-change",e)},[]),t})(),M=pc("cowork_model",vJt,yJt),',
+        'j=pc("cowork_effort_level","medium",Wu),M=pc("cowork_model",vJt,yJt),': 'j=(()=>{const e=pc("cowork_effort_level","high",Wu),[t,s]=n.useState(()=>{try{return localStorage.getItem("cowork_effort_level")||e}catch{return e}});return n.useEffect(()=>{const e=()=>{try{s(localStorage.getItem("cowork_effort_level")||"high")}catch{s("high")}};if("undefined"==typeof window)return;e();return window.addEventListener("cowork-effort-change",e),()=>window.removeEventListener("cowork-effort-change",e)},[]),t})(),M=pc("cowork_model",vJt,yJt),',
         '"Scheduled"': '"定时任务"',
         '"Pinned"': '"已固定"',
         '"What’s up next?"': '"接下来做什么？"',
@@ -461,33 +601,101 @@ def patch_hardcoded_frontend_strings(app: Path) -> None:
     health_files, health_count = patch_kimi_gateway_health_banner(assets_dir)
     patched_files += health_files
     patched_strings += health_count
+    permission_files, permission_count = patch_permission_defaults(assets_dir)
+    patched_files += permission_files
+    patched_strings += permission_count
 
     print(f"Patched hardcoded frontend strings: {patched_strings} replacements in {patched_files} files")
 
 
-def patch_kimi_gateway_health_banner(assets_dir: Path) -> tuple[int, int]:
-    """隐藏 Kimi 网关可连通时仍被旧健康状态标成 Unreachable 的 Cowork 横幅。"""
-    source = (
-        'if(d||!l||!w)return null;'
-        'const k=l.state===xV.InvalidConfig||l.state===xV.AuthFailed||l.state===xV.BootstrapError'
-    )
-    target = (
-        'if(d||!l||!w||l.state===xV.Unreachable&&'
-        '/api\\.kimi\\.com(?:\\/coding)?/i.test(String(l.endpoint??l.requestUrl??"")))return null;'
-        'const k=l.state===xV.InvalidConfig||l.state===xV.AuthFailed||l.state===xV.BootstrapError'
-    )
+def patch_permission_defaults(assets_dir: Path) -> tuple[int, int]:
+    """把 Code 新建会话权限默认值固定为绕过权限，并隔离旧 localStorage。"""
+    regex_replacements: list[tuple[re.Pattern[str], str]] = [
+        (
+            re.compile(r'\b(?P<fn>Ld|fc)\("cc-landing-draft-permission-mode","acceptEdits"\)'),
+            r'\g<fn>("cc-landing-draft-permission-mode-cn","bypassPermissions")',
+        ),
+        (
+            re.compile(r'\b(?P<fn>Mi|Ks)\("cc-landing-draft-permission-mode","acceptEdits",!1\)'),
+            r'\g<fn>("cc-landing-draft-permission-mode-cn","bypassPermissions",!1)',
+        ),
+        (
+            re.compile(
+                r'\b(?P<fn>Ld|fc)\("epitaxy-folder-permission-mode",'
+                r'(?P<default>[A-Za-z_$][\w$]*),\{scope:"account"\}\)'
+            ),
+            r'\g<fn>("epitaxy-folder-permission-mode-cn",\g<default>,{scope:"account"})',
+        ),
+    ]
+    literal_replacements = {
+        'const e=en??Zs??Gs??$s;return sn?wt(e,Os):e': (
+            'const e=en??Zs??$s??Gs??"bypassPermissions";return sn?wt(e,Os):e'
+        ),
+        'const e=en??Zs??$s??Gs??"bypassPermissions";return sn?wt(e,Os):e': (
+            'const e=en??Zs??$s??Gs??"bypassPermissions";return sn?wt(e,Os):e'
+        ),
+    }
     patched_files = 0
     patched_strings = 0
 
     for path in sorted(assets_dir.glob("*.js")):
         text = path.read_text(encoding="utf-8")
-        occurrences = text.count(source)
-        if not occurrences:
+        if "cc-landing-draft-permission-mode" not in text and "epitaxy-folder-permission-mode" not in text:
             continue
-        patched = text.replace(source, target)
-        path.write_text(patched, encoding="utf-8")
-        patched_files += 1
-        patched_strings += occurrences
+        patched = text
+        count = 0
+        for pattern, target in regex_replacements:
+            patched, n = pattern.subn(target, patched)
+            count += n
+        for source, target in literal_replacements.items():
+            occurrences = patched.count(source)
+            if occurrences:
+                patched = patched.replace(source, target)
+                count += occurrences
+        if patched != text:
+            path.write_text(patched, encoding="utf-8")
+            patched_files += 1
+            patched_strings += count
+
+    return patched_files, patched_strings
+
+
+def patch_kimi_gateway_health_banner(assets_dir: Path) -> tuple[int, int]:
+    """隐藏 Kimi 网关可连通时仍被旧健康状态标成 Unreachable 的 Cowork 横幅。"""
+    replacements = {
+        (
+            'if(d||!l||!w)return null;'
+            'const k=l.state===xV.InvalidConfig||l.state===xV.AuthFailed||l.state===xV.BootstrapError'
+        ): (
+            'if(d||!l||!w||l.state===xV.Unreachable&&'
+            '/api\\.kimi\\.com(?:\\/coding)?/i.test(String(l.endpoint??l.requestUrl??"")))return null;'
+            'const k=l.state===xV.InvalidConfig||l.state===xV.AuthFailed||l.state===xV.BootstrapError'
+        ),
+        (
+            'if(d||!l||!w)return null;'
+            'const k=l.state===yW.InvalidConfig||l.state===yW.AuthFailed||l.state===yW.BootstrapError'
+        ): (
+            'if(d||!l||!w||l.state===yW.Unreachable&&'
+            '/api\\.kimi\\.com(?:\\/coding)?/i.test(String(l.endpoint??l.requestUrl??"")))return null;'
+            'const k=l.state===yW.InvalidConfig||l.state===yW.AuthFailed||l.state===yW.BootstrapError'
+        ),
+    }
+    patched_files = 0
+    patched_strings = 0
+
+    for path in sorted(assets_dir.glob("*.js")):
+        text = path.read_text(encoding="utf-8")
+        patched = text
+        count = 0
+        for source, target in replacements.items():
+            occurrences = patched.count(source)
+            if occurrences:
+                patched = patched.replace(source, target)
+                count += occurrences
+        if patched != text:
+            path.write_text(patched, encoding="utf-8")
+            patched_files += 1
+            patched_strings += count
 
     return patched_files, patched_strings
 
@@ -500,8 +708,14 @@ def patch_epitaxy_cache_bust(ion_dist_dir: Path, assets_dir: Path) -> tuple[int,
         (
             path
             for path in sorted(assets_dir.glob("*.js"))
-            if "function em(t){const s=i()" in path.read_text(encoding="utf-8", errors="ignore")
-            and "modelExtraSections:gs" in path.read_text(encoding="utf-8", errors="ignore")
+            if (
+                "function em(t){const s=i()" in path.read_text(encoding="utf-8", errors="ignore")
+                and "modelExtraSections:gs" in path.read_text(encoding="utf-8", errors="ignore")
+            )
+            or (
+                'const um="ccd-effort-level"' in path.read_text(encoding="utf-8", errors="ignore")
+                and "modelExtraSections:xs" in path.read_text(encoding="utf-8", errors="ignore")
+            )
         ),
         None,
     )
@@ -561,6 +775,122 @@ def patch_cowork_model_menu(assets_dir: Path) -> tuple[int, int]:
     """把 Cowork 模型菜单固定为 Opus 伪装入口、Kimi 真实入口和完整强度。"""
     patched_files = 0
     patched_strings = 0
+
+    # Claude 1.6608+：Cowork 与普通入口共用 Jbt 模型选择器。
+    # 这里直接把共享选择器的候选项重建为固定两项，避免 Missing/Legacy fallback。
+    jbt_model_re = re.compile(
+        r'z=(?:r\?\?A|\(e=>e==="kimi-for-coding"\?"opus\[1m\]":e\)\(r\?\?A\)),'
+        r'\{allModelOptions:F,mainModels:U,overflowModels:q\}=R,'
+        r'B=ud\("sticky_model_selector"\),\[\$,V\]=n\.useState\(null\),H=!B&&\$\?\$:z;'
+        r'let W=F\.find\(e=>e\.model===H\);W\|\|\(W=F\.find\(e=>e\.model===L\)\?\?Kbt\);'
+        r'const G=n\.useRef\(null\),K=S7\("paprika_mode"\);Dbt\(z\);'
+        r'const Y=Abt\(\),Z=!h&&!O,Q=Z\?\[W\]:U,X=Z\?U\.filter\(e=>e\.model!==H\):\[\],'
+        r'J=Z\?q\.filter\(e=>e\.model!==H\):q,',
+        re.DOTALL,
+    )
+    jbt_model_target = (
+        'z=(e=>{const t=String(e??"").toLowerCase();'
+        'if("kimi-for-coding"===t||"kimi-k2.6"===t||/kimi/i.test(String(e))&&/k2\\.6/i.test(String(e)))return"kimi-for-coding";'
+        'if("opus"===t||"opus[1m]"===t)return"opus[1m]";return"opus[1m]"})(r??A),'
+        '{allModelOptions:F}=R,U=[],q=[],B=ud("sticky_model_selector"),[$,V]=n.useState(null),H=$??z,'
+        'rr={...(F.find(e=>"opus[1m]"===e.model)??F.find(e=>/opus/i.test(e.model)&&/\\[1m\\]/i.test(e.model))??F.find(e=>e.thinking_modes?.length)??{}),model:"opus[1m]",name:"Opus 4.71M",name_i18n_key:void 0,inactive:!1,overflow:!1},'
+        'oo=F.find(e=>{const t=String(e.model??"").toLowerCase(),s=String(e.name??"").toLowerCase();'
+        'return"kimi-for-coding"===t||"kimi-for-coding"===s||"kimi-k2.6"===t||"kimi-k2.6"===s||/kimi.*k2\\.6/i.test(t)||/kimi.*k2\\.6/i.test(s)}),'
+        'll=oo?.model??"kimi-for-coding",'
+        'cc={...(oo??F.find(e=>e.thinking_modes?.length)??{}),model:ll,name:"Kimi-k2.6",name_i18n_key:void 0,inactive:!1,overflow:!1};'
+        'let W="kimi-for-coding"===String(H).toLowerCase()||/kimi/i.test(String(H))&&/k2\\.6/i.test(String(H))?cc:rr;'
+        'const G=n.useRef(null),K=S7("paprika_mode");Dbt(W.model);'
+        'const Y=Abt(),Z=!h&&!O,Q=[rr,cc],X=[],J=[],'
+    )
+    jbt_handler_re = re.compile(
+        r'const de=e=>\{if\(e\.model===H\)return;if\(ne\(e\.model\)\)return;'
+        r'if\(ae\|\|!Ybt\(e\.model,!1,!re,L,le\)\)\{',
+        re.DOTALL,
+    )
+    jbt_handler_target = (
+        'const de=e=>{const t=String(e.model??"").toLowerCase(),s="opus"===t||"opus[1m]"===t||'
+        '"kimi-for-coding"===t||/kimi/i.test(String(e.model))&&/k2\\.6/i.test(String(e.model));'
+        'if(e.model===H)return;if(!s&&ne(e.model))return;if(s||ae||!Ybt(e.model,!1,!re,L,le)){'
+    )
+    jbt_effort_re = re.compile(
+        r'\{activeMode:ee\}=Fbt\(z,K\),'
+        r'(?:\[cw,Sw\]=n\.useState\(\(\)=>\{try\{return localStorage\.getItem\("cowork_effort_level"\)\|\|"high"\}catch\{return"high"\}\}\),'
+        r'Fw=n\.useMemo\(\(\)=>_\?\?(?:\("cowork"===I\?)?\{current:cw,options:\[\{value:"low",label:"低"\},\{value:"medium",label:"中"\},\{value:"high",label:"高"\},\{value:"xhigh",label:"超高"\},\{value:"max",label:"最大"\}\],onSelect:e=>\{Sw\(e\);try\{localStorage\.setItem\("cowork_effort_level",e\),window\.dispatchEvent\(new CustomEvent\("cowork-effort-change",\{detail:e\}\)\)\}catch\{\}\}\}(?::void 0\))?,\[_,cw(?:,I)?\]\),)?'
+        r'te=.*?,\{toggleConversationSetting:se\}=E7\(\{source:"modelSelector"\}\)',
+        re.DOTALL,
+    )
+    jbt_effort_target = (
+        '{activeMode:ee}=Fbt(z,K),'
+        '[cw,Sw]=n.useState(()=>{try{return localStorage.getItem("cowork_effort_level")||"high"}catch{return"high"}}),'
+        'Fw=n.useMemo(()=>_??{current:cw,options:[{value:"low",label:"低"},{value:"medium",label:"中"},{value:"high",label:"高"},{value:"xhigh",label:"超高"},{value:"max",label:"最大"}],'
+        'onSelect:e=>{Sw(e);try{localStorage.setItem("cowork_effort_level",e),window.dispatchEvent(new CustomEvent("cowork-effort-change",{detail:e}))}catch{}}},[_,cw]),'
+        'te=Fw?{low:"低",medium:"中",high:"高",xhigh:"超高",max:"最大"}[Fw.current]??ee?.label:O?void 0:ee?.label,'
+        '{toggleConversationSetting:se}=E7({source:"modelSelector"})'
+    )
+    jbt_effort_render_re = re.compile(
+        r'(?:_&&|Fw&&)a\.jsxs\(a\.Fragment,\{children:\[a\.jsx\(tl,\{className:_de\}\),'
+        r'a\.jsx\("div",\{className:"text-xs text-text-500 pt-2 pb-1 px-2",children:a\.jsx\(c,\{defaultMessage:"强度",id:"VKZ/U8vAsk"\}\)\}\),'
+        r'a\.jsx\(Xbt,\{section:(?:_|Fw),compactMenu:j\}\)\]\}\)',
+        re.DOTALL,
+    )
+    jbt_effort_render_target = (
+        'Fw&&a.jsxs(a.Fragment,{children:[a.jsx(tl,{className:_de}),'
+        'a.jsx("div",{className:"text-xs text-text-500 pt-2 pb-1 px-2",children:a.jsx(c,{defaultMessage:"强度",id:"VKZ/U8vAsk"})}),'
+        'a.jsx(Xbt,{section:Fw,compactMenu:j})]})'
+    )
+    jbt_state_replacements = {
+        'Y(e.model)||se("compass_mode",null),B||V(e.model),D(e.model),i?.(e)}': (
+            'Y(e.model)||se("compass_mode",null),V(e.model),D(e.model),i?.(e)}'
+        ),
+        'Pbt(W),te].filter(Boolean).join(" ")': (
+            'Pbt(W),te].filter(Boolean).join(" ")'
+        ),
+    }
+
+    pte_replacements = {
+        'R=(e=>e==="kimi-for-coding"?"opus[1m]":e)(N),O=I': 'R=N,O=I',
+        'F=(e=>e==="kimi-for-coding"?"opus[1m]":e)(z?.sessionData?.session_context?.model??null),': (
+            'F=z?.sessionData?.session_context?.model??null,'
+        ),
+        'return(e=>e==="kimi-for-coding"?"opus[1m]":e)(t.sessionModel??t.sessionData?.session_context?.model)})??null': (
+            'return t.sessionModel??t.sessionData?.session_context?.model})??null'
+        ),
+        '_=yc("cowork_effort_level","medium",Mp),j=yc("cowork_model",T0t,I0t),': (
+            '_=(()=>{const e=yc("cowork_effort_level","high",Mp),[t,s]=n.useState(()=>{try{return localStorage.getItem("cowork_effort_level")||e}catch{return e}});return n.useEffect(()=>{const e=()=>{try{s(localStorage.getItem("cowork_effort_level")||"high")}catch{s("high")}};if("undefined"==typeof window)return;e();return window.addEventListener("cowork-effort-change",e),()=>window.removeEventListener("cowork-effort-change",e)},[]),t})(),j=yc("cowork_model",T0t,I0t),'
+        ),
+        '_=(()=>{const e=yc("cowork_effort_level","high",Mp),[t,s]=n.useState(()=>{try{return localStorage.getItem("cowork_effort_level")||e}catch{return e}});return n.useEffect(()=>{const e=()=>{try{s(localStorage.getItem("cowork_effort_level")||"high")}catch{s("high")}};if("undefined"==typeof window)return;e();return window.addEventListener("cowork-effort-change",e),()=>window.removeEventListener("cowork-effort-change",e)},[]),t})(),j=yc("cowork_model",T0t,I0t),': (
+            '_=(()=>{const e=yc("cowork_effort_level","high",Mp),[t,s]=n.useState(()=>{try{return localStorage.getItem("cowork_effort_level")||e}catch{return e}});return n.useEffect(()=>{const e=()=>{try{s(localStorage.getItem("cowork_effort_level")||"high")}catch{s("high")}};if("undefined"==typeof window)return;e();return window.addEventListener("cowork-effort-change",e),()=>window.removeEventListener("cowork-effort-change",e)},[]),t})(),j=yc("cowork_model",T0t,I0t),'
+        ),
+    }
+
+    for path in sorted(assets_dir.glob("*.js")):
+        text = path.read_text(encoding="utf-8")
+        if "const Jbt=({conversationUuid" not in text:
+            continue
+        patched = text
+        count = 0
+        patched, n = jbt_model_re.subn(jbt_model_target, patched, count=1)
+        count += n
+        patched, n = jbt_handler_re.subn(jbt_handler_target, patched, count=1)
+        count += n
+        patched, n = jbt_effort_re.subn(jbt_effort_target, patched, count=1)
+        count += n
+        patched, n = jbt_effort_render_re.subn(jbt_effort_render_target, patched, count=1)
+        count += n
+        for source, target in jbt_state_replacements.items():
+            occurrences = patched.count(source)
+            if occurrences:
+                patched = patched.replace(source, target)
+                count += occurrences
+        for source, target in pte_replacements.items():
+            occurrences = patched.count(source)
+            if occurrences:
+                patched = patched.replace(source, target)
+                count += occurrences
+        if patched != text:
+            path.write_text(patched, encoding="utf-8")
+            patched_files += 1
+            patched_strings += count
 
     vft_re = re.compile(
         r'function Vft\(e,t=\{\}\)\{(?:if\("opus\[1m\]"===e\?\.model\|\|"opus"===e\?\.model\)'
@@ -704,6 +1034,101 @@ def patch_epitaxy_model_menu(assets_dir: Path) -> tuple[int, int]:
     """把 Claude Code 模型菜单固定为 Opus 伪装入口、Kimi 真实入口和完整强度。"""
     patched_files = 0
     patched_strings = 0
+
+    # Claude 1.6608+：Code 页模型菜单在 zm() 内部生成，强度来自 hm()/gm() 与 xs。
+    # 旧版 ps/Od(W) 类补丁无法覆盖这里，所以单独处理新版结构。
+    code_current_re = re.compile(
+        r'const K=e\.useCallback\(e=>null!==e&&M\.some\(t=>t\.model===e\),\[M\]\)\(S\)\?S:null,'
+        r'W=H\?\?O\?\?L\?\?K\?\?k,V=M\.find\(e=>e\.model===W\),G=V\?null:st\(W\),'
+        r'Q=e\.useMemo\(\(\)=>V\?Fm\(V\):G,\[V,G\]\),X=nt\(\)',
+        re.DOTALL,
+    )
+    code_current_target = (
+        'const K=e.useCallback(e=>null!==e&&M.some(t=>t.model===e),[M])(S)?S:null,'
+        'W=(e=>{const t=String(e??"").toLowerCase();'
+        'if(!e)return"opus[1m]";'
+        'if("kimi-for-coding"===t||"kimi-k2.6"===t)return"kimi-for-coding";'
+        'if("opus"===t||"opus[1m]"===t)return"opus[1m]";'
+        'const s=M.find(e=>String(e.model??"").toLowerCase()===t||String(e.name??"").toLowerCase()===t);'
+        'return s?s.model:(/kimi/i.test(String(e))&&/k2\\.6/i.test(String(e))?"kimi-for-coding":"opus[1m]")'
+        '})(H??O??L??K??k),'
+        'V=M.find(e=>e.model===W),'
+        'G=V?null:("opus"===W||"opus[1m]"===W?"Opus 4.71M":'
+        '("kimi-for-coding"===W||/kimi/i.test(String(W))&&/k2\\.6/i.test(String(W))?"Kimi-k2.6":st(W))),'
+        'Q=e.useMemo(()=>("kimi-for-coding"===W||/kimi/i.test(String(W))&&/k2\\.6/i.test(String(W)))?'
+        '"Kimi-k2.6":V?Fm(V):G,[V,G,W]),X=nt()'
+    )
+    code_items_re = re.compile(
+        r'pe=e\.useMemo\(\(\)=>\{const e=M\.map\(e=>\{const t=C\.includes\(e\.model\);return\{label:t\?.*?'
+        r'\},\[M,C,W,ue,ie,oe,G,s\]\),me=e\.useMemo\(\(\)=>\{if\(!de\)return pe;'
+        r'const\[e,\.\.\.t\]=pe;return e\?\[de,\{...e,separatorBefore:!0\},\.\.\.t\]:\[de\]\},\[de,pe\]\)',
+        re.DOTALL,
+    )
+    code_items_target = (
+        'pe=e.useMemo(()=>{'
+        'const i=e=>"kimi-for-coding"===String(e).toLowerCase()||/kimi/i.test(String(e))&&/k2\\.6/i.test(String(e)),'
+        'o=M.find(e=>{const t=String(e.model??"").toLowerCase(),s=String(e.name??"").toLowerCase();'
+        'return"kimi-for-coding"===t||"kimi-for-coding"===s||"kimi-k2.6"===t||"kimi-k2.6"===s||/kimi.*k2\\.6/i.test(t)||/kimi.*k2\\.6/i.test(s)}),'
+        'l=o?.model??"kimi-for-coding";'
+        'return['
+        '{label:"Opus 4.71M",checked:"opus"===W||"opus[1m]"===W,onSelect:()=>ue.current("opus[1m]"),disabled:ie},'
+        '{label:"Kimi-k2.6",checked:String(W).toLowerCase()===String(l).toLowerCase()||i(W),onSelect:()=>ue.current(l),disabled:ie}'
+        ']},[M,W,ue,ie]),me=pe'
+    )
+    code_xs_re = re.compile(
+        r'xs=e\.useMemo\(\(\)=>\{const e=\[\];if\(ms\)\{const t=fm\.filter\(e=>\("max"!==e\|\|Fe\)&&\("xhigh"!==e\|\|Oe\)\);'
+        r'e\.push\(\{key:"effort",header:s\.formatMessage\(Pm\.effortHeader\),items:t\.map\(e=>\(\{label:s\.formatMessage\(Em\[e\]\),checked:e===hs,onSelect:\(\)=>gs\(e\)\}\)\)\}\)\}'
+        r'if\(ls\)\{const t=null!==cs;e\.push\(\{key:"fastMode",header:s\.formatMessage\(Pm\.fastModeHeader\),items:\[\{label:s\.formatMessage\(Pm\.fastModeToggleLabel\),'
+        r'keepOpen:!0,disabled:t,onSelect:t\?void 0:\(\)=>Pe\(!Ee\),tooltip:cs\?\?s\.formatMessage\(Pm\.fastModeToggleHint\),tooltipSide:"left",tooltipMultiline:!0,'
+        r'trailing:c\.jsx\(Tu,\{checked:!t&&Ee,disabled:t,"aria-hidden":!0,tabIndex:-1\}\)\}\]\}\)\}return e\},\[ms,Fe,Oe,hs,gs,ls,cs,Ee,Pe,s\]\)',
+        re.DOTALL,
+    )
+    code_xs_target = (
+        'xs=e.useMemo(()=>{const e=[],t=fm;'
+        'e.push({key:"effort",header:s.formatMessage(Pm.effortHeader),items:t.map(e=>({label:s.formatMessage(Em[e]),checked:e===hs,onSelect:()=>gs(e)}))});'
+        'if(ls){const t=null!==cs;e.push({key:"fastMode",header:s.formatMessage(Pm.fastModeHeader),items:[{label:s.formatMessage(Pm.fastModeToggleLabel),'
+        'keepOpen:!0,disabled:t,onSelect:t?void 0:()=>Pe(!Ee),tooltip:cs??s.formatMessage(Pm.fastModeToggleHint),tooltipSide:"left",tooltipMultiline:!0,'
+        'trailing:c.jsx(Tu,{checked:!t&&Ee,disabled:t,"aria-hidden":!0,tabIndex:-1})}]})}return e},[hs,gs,ls,cs,Ee,Pe,s])'
+    )
+    code_new_replacements = {
+        'pm={low:"Low",medium:"Medium",high:"High",xhigh:"Extra high",max:"Max"}': (
+            'pm={low:"低",medium:"中",high:"高",xhigh:"超高",max:"最大"}'
+        ),
+        'g="max"===h&&!r||"xhigh"===h&&!o?"high":h;return{effortLevel:g,spawnEffortLevel:u&&null===p&&null===f?void 0:g,setEffortLevel:e.useCallback(e=>{localStorage.setItem(um,e),m(e)},[]),modelSupportsEffort:i,modelSupportsMaxEffort:r,modelSupportsXhighEffort:o}': (
+            'g=h;return{effortLevel:g,spawnEffortLevel:g,setEffortLevel:e.useCallback(e=>{localStorage.setItem(um,e),m(e)},[]),modelSupportsEffort:!0,modelSupportsMaxEffort:!0,modelSupportsXhighEffort:!0}'
+        ),
+        'x=g.success?"max"===g.data&&!p||"xhigh"===g.data&&!m?"high":g.data:void 0,v=h.current!==n&&void 0!==x?x:c,b=f&&(void 0!==n?!!l&&!!n:s);return{section:e.useMemo(()=>{if(!b)return;const e=fm.filter(e=>("max"!==e||p)&&("xhigh"!==e||m));return{current:v,options:e.map(e=>({value:e,label:pm[e]})),onSelect:e=>{': (
+            'x=g.success?g.data:void 0,v=h.current!==n&&void 0!==x?x:c,b=!0;return{section:e.useMemo(()=>{const e=fm;return{current:v,options:e.map(e=>({value:e,label:pm[e]})),onSelect:e=>{'
+        ),
+        'spawnEffort:b?d:void 0}': 'spawnEffort:d}',
+        'ms=De&&(t?!!ps:"bridge"!==rs),hs=': 'ms=!0,hs=',
+        'He=Ue.success?"max"===Ue.data&&!Fe||"xhigh"===Ue.data&&!Oe?"high":Ue.data:void 0': (
+            'He=Ue.success?Ue.data:void 0'
+        ),
+        'effort:De?_e:void 0,repoInfo': 'effort:_e,repoInfo',
+    }
+
+    for path in sorted(assets_dir.glob("*.js")):
+        text = path.read_text(encoding="utf-8")
+        if 'const um="ccd-effort-level"' not in text or "modelExtraSections:xs" not in text:
+            continue
+        patched = text
+        count = 0
+        patched, n = code_current_re.subn(code_current_target, patched, count=1)
+        count += n
+        patched, n = code_items_re.subn(code_items_target, patched, count=1)
+        count += n
+        patched, n = code_xs_re.subn(code_xs_target, patched, count=1)
+        count += n
+        for source, target in code_new_replacements.items():
+            occurrences = patched.count(source)
+            if occurrences:
+                patched = patched.replace(source, target)
+                count += occurrences
+        if patched != text:
+            path.write_text(patched, encoding="utf-8")
+            patched_files += 1
+            patched_strings += count
     kimi_match = r'("kimi-for-coding"===W||/kimi/i.test(String(W))&&/k2\.6/i.test(String(W)))'
     custom_effort_support = f'("opus"===W||"opus[1m]"===W||{kimi_match})'
     effort_support = f'(_e||"opus"===W||"opus[1m]"===W||{kimi_match})'
@@ -988,14 +1413,27 @@ def patch_custom3p_model_validation(app: Path) -> bool:
         return True
 
     count = content.count(anchor)
-    if count != 1:
-        print(
-            "Warning: Could not patch custom 3P model validation. "
-            "Claude bundle format may have changed. Continue without this optional patch."
-        )
-        return False
+    if count == 1:
+        patched_content = content.replace(anchor, patched, 1)
+    else:
+        # Claude 1.6608+ moved the model-name validation into _Zt().
+        # Make that validator a no-op while preserving app.asar file length.
+        new_anchor = b"function _Zt(e,A){if(!bbA||!(A!=null&&A.length))return null;"
+        new_expr = b"return null;"
+        new_patched = b"function _Zt(e,A){" + new_expr + b" " * (len(new_anchor) - len(b"function _Zt(e,A){") - len(new_expr))
+        if len(new_anchor) != len(new_patched):
+            raise SystemExit("Internal patch error: custom 3P validation replacement changed length.")
+        if content.count(new_patched) == 1:
+            print("Custom 3P model-name validation already patched in app.asar")
+            return True
+        if content.count(new_anchor) != 1:
+            print(
+                "Warning: Could not patch custom 3P model validation. "
+                "Claude bundle format may have changed. Continue without this optional patch."
+            )
+            return False
+        patched_content = content.replace(new_anchor, new_patched, 1)
 
-    patched_content = content.replace(anchor, patched, 1)
     if len(patched_content) != len(content):
         raise SystemExit("Internal patch error: app.asar length changed during custom 3P patch.")
     data[content_offset:content_end] = patched_content
@@ -1303,6 +1741,123 @@ def clear_frontend_cache(user_home: Path, dry_run: bool) -> None:
         print(f"Cleared {moved} frontend cache folder(s)")
 
 
+def check_frontend_invariants(app: Path, report: PatchReport, *, require: bool = True) -> bool:
+    bundles = find_frontend_bundles(app)
+    index = bundles["index"]
+    code = bundles["code"]
+
+    if index is None:
+        report.add("frontend.index_bundle", "missing", "找不到包含 Jbt 的主前端 bundle", required=require)
+    else:
+        text = index.read_text(encoding="utf-8", errors="ignore")
+        checks = {
+            "cowork.two_models": (
+                'Q=[rr,cc],X=[],J=[]' in text
+                and 'name:"Opus 4.71M"' in text
+                and 'name:"Kimi-k2.6"' in text
+            ),
+            "cowork.fallback_effort": (
+                'cowork_effort_level")||"high"' in text
+                and 'Fw=n.useMemo(()=>_??{current:cw' in text
+                and '"cowork"===I?{current:cw' not in text
+                and 'section:Fw' in text
+                and 'value:"xhigh",label:"超高"' in text
+                and 'value:"max",label:"最大"' in text
+            ),
+            "cowork.effort_sync": (
+                'window.addEventListener("cowork-effort-change"' in text
+                and 'NT?.setYukonSilverConfig?.({...k,effort:_' in text
+            ),
+            "cowork.kimi_health_hidden": (
+                'l.state===yW.Unreachable&&/api\\.kimi\\.com' in text
+                or 'l.state===xV.Unreachable&&/api\\.kimi\\.com' in text
+            ),
+        }
+        for name, ok in checks.items():
+            report.add(name, "passed" if ok else "missing", file=index, required=require)
+        ok, message = check_js_syntax(index)
+        report.add("syntax.index_bundle", "passed" if ok else "failed", message, file=index, required=require)
+
+    if code is None:
+        report.add("frontend.code_bundle", "missing", "找不到包含 Code 模型菜单的 bundle", required=require)
+    else:
+        text = code.read_text(encoding="utf-8", errors="ignore")
+        checks = {
+            "code.two_models": (
+                'return[{label:"Opus 4.71M"' in text
+                and '{label:"Kimi-k2.6"' in text
+            ),
+            "code.full_effort": (
+                'xs=e.useMemo(()=>{const e=[],t=fm;' in text
+                and 'modelSupportsEffort:!0,modelSupportsMaxEffort:!0,modelSupportsXhighEffort:!0' in text
+                and 'pm={low:"低",medium:"中",high:"高",xhigh:"超高",max:"最大"}' in text
+            ),
+        }
+        for name, ok in checks.items():
+            report.add(name, "passed" if ok else "missing", file=code, required=require)
+        ok, message = check_js_syntax(code)
+        report.add("syntax.code_bundle", "passed" if ok else "failed", message, file=code, required=require)
+
+    assets_dir = app / FRONTEND_ASSETS_REL
+    permission_files: list[Path] = []
+    bad_permission_files: list[str] = []
+    has_draft_default = False
+    has_folder_key = False
+    has_bypass_priority = False
+    if assets_dir.exists():
+        for path in sorted(assets_dir.glob("*.js")):
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            if "cc-landing-draft-permission-mode" not in text and "epitaxy-folder-permission-mode" not in text:
+                continue
+            permission_files.append(path)
+            if '"cc-landing-draft-permission-mode","acceptEdits"' in text:
+                bad_permission_files.append(path.name)
+            if '"epitaxy-folder-permission-mode",' in text:
+                bad_permission_files.append(path.name)
+            has_draft_default = has_draft_default or '"cc-landing-draft-permission-mode-cn","bypassPermissions"' in text
+            has_folder_key = has_folder_key or '"epitaxy-folder-permission-mode-cn"' in text
+            has_bypass_priority = has_bypass_priority or 'en??Zs??$s??Gs??"bypassPermissions"' in text
+    permission_ok = has_draft_default and has_folder_key and has_bypass_priority and not bad_permission_files
+    report.add(
+        "code.permission_default_bypass",
+        "passed" if permission_ok else "missing",
+        (
+            ""
+            if permission_ok
+            else f"permission_files={[path.name for path in permission_files]}, bad={sorted(set(bad_permission_files))}"
+        ),
+        required=require,
+    )
+
+    custom3p_ok = check_custom3p_validation_patched(app)
+    report.add("asar.custom3p_validation", "passed" if custom3p_ok else "missing", required=require)
+
+    signature = run(["codesign", "--verify", "--deep", "--strict", "--verbose=2", str(app)], check=False)
+    report.add(
+        "codesign.verify",
+        "passed" if signature.returncode == 0 else "failed",
+        signature.stdout.strip(),
+        required=require,
+    )
+
+    return not report.has_required_failures()
+
+
+def print_report_summary(report: PatchReport) -> None:
+    data = report.to_dict()
+    summary = data["summary"]
+    print("Patch diagnostics summary:")
+    for key in ["passed", "applied", "already_patched", "missing", "failed"]:
+        if key in summary:
+            print(f"  {key}: {summary[key]}")
+    failures = data["required_failures"]
+    if failures:
+        print("Required failures:")
+        for item in failures:
+            location = f" ({item['file']})" if item.get("file") else ""
+            print(f"  - {item['name']}{location}: {item['status']}")
+
+
 def backup_and_replace(original: Path, patched: Path, dry_run: bool) -> Path:
     stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
     backup = original.with_name(f"Claude.backup-before-zh-CN-{stamp}.app")
@@ -1378,15 +1933,25 @@ def main() -> int:
     parser.add_argument("--app", type=Path, default=APP_DEFAULT, help="Path to Claude.app")
     parser.add_argument("--user-home", type=Path, default=Path.home(), help="Home directory whose Claude config should be updated")
     parser.add_argument("--dry-run", action="store_true", help="Prepare and verify a patched temp app, but do not replace /Applications/Claude.app")
+    parser.add_argument("--diagnose", action="store_true", help="Only inspect the current Claude.app patch status and write a diagnostic report")
     parser.add_argument("--launch", action="store_true", help="Launch Claude after installation")
     args = parser.parse_args()
+
+    if not args.app.exists():
+        raise SystemExit(f"Claude.app not found: {args.app}")
+
+    if args.diagnose:
+        report = PatchReport(str(args.app), get_claude_version(args.app), "diagnose")
+        check_frontend_invariants(args.app, report, require=True)
+        write_patch_report(report)
+        print_report_summary(report)
+        return 1 if report.has_required_failures() else 0
 
     require_file(FRONTEND_TRANSLATION)
     require_file(DESKTOP_TRANSLATION)
     require_file(LOCALIZABLE_STRINGS)
-    if not args.app.exists():
-        raise SystemExit(f"Claude.app not found: {args.app}")
     require_virtualization_entitlement(args.app)
+    report = PatchReport(str(args.app), get_claude_version(args.app), "dry-run" if args.dry_run else "install")
 
     try:
         in_applications = args.app.resolve().as_posix().startswith("/Applications/")
@@ -1406,6 +1971,11 @@ def main() -> int:
     patch_language_whitelist(patched_app)
     patch_hardcoded_frontend_strings(patched_app)
     model_validation_patched = patch_custom3p_model_validation(patched_app)
+    report.add(
+        "asar.custom3p_validation.patch",
+        "applied" if model_validation_patched else "missing",
+        required=False,
+    )
     patch_native_menu_role_labels(patched_app)
     merge_frontend_locale(patched_app)
     install_desktop_locale(patched_app)
@@ -1418,6 +1988,10 @@ def main() -> int:
         set_user_locale(args.user_home)
         clear_frontend_cache(args.user_home, args.dry_run)
     verify(patched_app)
+    if not check_frontend_invariants(patched_app, report, require=True):
+        write_patch_report(report)
+        print_report_summary(report)
+        raise SystemExit("Required frontend invariants failed. Original Claude.app was left untouched.")
 
     backup = backup_and_replace(args.app, patched_app, args.dry_run)
     if not args.dry_run:
@@ -1428,6 +2002,8 @@ def main() -> int:
 
     if not model_validation_patched:
         print("Note: optional 3P model-name validation patch was skipped for this Claude version.")
+    write_patch_report(report)
+    print_report_summary(report)
     print("Done. Select Language -> 中文（中国） in Claude if it is not already selected.")
     return 0
 

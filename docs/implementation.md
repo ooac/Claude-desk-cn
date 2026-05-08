@@ -139,6 +139,21 @@ bypassPermissions
 
 因此新建会话默认显示和使用“绕过权限”。如果用户在界面中手动切换，新的选择仍会按补丁专用键持久化。
 
+Claude 新版前端存在多套存储 helper。旧版使用 `Ld/Mi`，新版 Code 页面使用 `fc`，新版 landing chunk 使用 `Ks`。补丁必须同时覆盖这些入口：
+
+```js
+cc-landing-draft-permission-mode-cn -> bypassPermissions
+epitaxy-folder-permission-mode-cn -> account-scoped folder map
+```
+
+Code 页面最终计算当前权限时，原逻辑可能优先读取项目默认值 `Gs`，在其他电脑上再次回到 `acceptEdits`。补丁会把顺序改成先使用补丁专用默认值：
+
+```js
+en ?? Zs ?? $s ?? Gs ?? "bypassPermissions"
+```
+
+含义是：用户当前手动选择 `en` 优先；补丁专用文件夹设置 `Zs` 次之；补丁专用全局默认 `$s` 再次之；官方项目默认 `Gs` 只作为兜底，不能覆盖首次打开时的“绕过权限”。
+
 ### 6. 固定 Opus 伪装入口并保留 Kimi 真实入口
 
 Claude Code 的一些能力和前端判断依赖默认模型名。用户需要继续保留：
@@ -210,7 +225,55 @@ Code 页面强度菜单不再只依赖官方 `Od(W)` 能力判断。当前模型
 
 这是有意设计的降级策略：中文化和签名流程优先保证可执行；模型校验补丁属于兼容增强，失败时不应该让整个安装失败。
 
-### 8. app.asar 修改和完整性更新
+### 8. Claude 更新后的模型菜单回归项
+
+Claude Desktop 更新后，前端 bundle 文件名和压缩变量名经常变化。每次更新本项目或重新适配新版 Claude 时，必须重新检查这些重复问题：
+
+1. Cowork 不能显示 `Legacy Model`，只能显示 `Opus 4.71M` 和 `Kimi-k2.6`。
+2. Cowork 点击 `Kimi-k2.6` 后，勾选必须移动到底部真实 Kimi 项，不能被归一回 `opus[1m]`。
+3. Cowork 不应因为 `api.kimi.com` 的旧健康检查结果显示黄色阻断横幅；如果网关真实不可用，只影响实际请求，不应阻止模型菜单。
+4. Code 模式底部不能只显示 `· 高`、`· 最大` 或空模型名。
+5. Code 模式菜单只能有两个模型入口：`Opus 4.71M` 和 `Kimi-k2.6`，不能出现两个 Kimi。
+6. Code 和 Cowork 都必须显示五档强度：`低 / 中 / 高 / 超高 / 最大`。
+7. `超高` 和 `最大` 必须可点击，选择后底部标签要同步更新。
+8. 新版本如果把共享模型选择器从旧 `Wft/Vft/ogt` 改到新函数，必须补丁新的共享选择器，而不是只修旧 anchor。
+9. Code 新建会话权限模式必须默认 `绕过权限`，不能因为新版存储 helper 或旧电脑缓存回到 `接受编辑`。
+
+当前 `1.6608.0` 适配点：
+
+- Cowork/普通入口：共享模型选择器 `Jbt`，固定重建两项模型，并移除 `Legacy Model` fallback 对当前菜单的影响。
+- Cowork 强度：`Jbt` 只在 Code 传入 `ccdEffortSection` 时有原生强度 section；Cowork 不传该 section，因此补丁会在 `Jbt` 内增加 fallback section。只要原生 section 缺失，就无条件使用 fallback，不再依赖 `activeMode` 字符串判断。默认值为 `high`，显示为“高”，选中后写入 `localStorage["cowork_effort_level"]` 并派发 `cowork-effort-change`。
+- Cowork 配置同步：Cowork 配置处监听 `cowork-effort-change`，让 `NT.setYukonSilverConfig({ effort })` 能使用最新强度。这样点击 `超高` 或 `最大` 后，不只更新菜单，也会进入后续会话配置。
+- Cowork 健康横幅：新版 `EQt/yW.Unreachable` 结构下，对 `api.kimi.com` 旧健康状态做隐藏处理。
+- Code 页面：`zm()` 内的 `W/Q/pe/me` 负责模型菜单，`hm()/gm()` 和 `xs` 负责强度菜单；强度必须无条件生成五档，不再依赖 `De`、`Fe`、`Oe` 或本机环境。
+
+### 9. 升级诊断日志与必过 invariant
+
+新版 Claude 经常改 bundle 文件名和压缩变量名。为了避免补丁点失效后仍替换 `/Applications/Claude.app`，脚本现在有两套诊断机制：
+
+1. 安装流程会在替换原 app 前运行 `check_frontend_invariants()`。必过项包括 Cowork 两模型、Cowork 五档强度、Cowork 强度同步、Code 两模型、Code 五档强度、Code 默认绕过权限、Kimi 健康横幅隐藏、JS 语法检查、第三方模型校验补丁和签名验证。
+2. `--diagnose` 只读模式会检查当前 `/Applications/Claude.app`，并写入诊断日志，不修改任何文件。
+
+日志路径：
+
+```text
+Logs/latest.json
+Logs/patch-report-YYYYMMDD-HHMMSS.json
+```
+
+`Logs/` 固定在项目根目录，也就是 `install.command` 同级。这样把项目复制到其他电脑后，异常机器生成的日志也在同一个文件夹里，方便直接打包发回。脚本通过 sudo 运行时，会把 `Logs/` 及生成的 JSON 文件 owner 改回当前用户，避免日志文件变成 root-owned。
+
+日志中的每个补丁点会记录 `passed`、`applied`、`already_patched`、`missing` 或 `failed`，并带上目标 bundle 文件名和 Claude 版本。日志不记录 API Key、token、请求内容或用户对话。
+
+如果其他电脑出现 Cowork 只有模型没有强度、Code 只显示 `· 高`、`Legacy Model`、Kimi 不能切换等问题，优先运行：
+
+```bash
+/usr/bin/python3 patch_claude_zh_cn.py --diagnose --app /Applications/Claude.app
+```
+
+然后看 `latest.json` 的 `required_failures`。如果失败项是 `cowork.fallback_effort`，说明共享选择器强度 fallback 没命中；如果失败项是 `code.full_effort`，说明 Code 的 `xs` 强度构建没有被无条件替换；如果失败项是 `code.permission_default_bypass`，说明默认“绕过权限”补丁没命中新版 bundle；如果是 `syntax.*`，说明 bundle 补丁破坏了 JS 语法，安装流程应当已经中止。
+
+### 10. app.asar 修改和完整性更新
 
 `app.asar` 是 Electron 应用的归档文件。项目里有一套轻量 asar 读写逻辑，用来修改其中的 `.vite/build/index.js`。
 
@@ -226,7 +289,7 @@ Code 页面强度菜单不再只依赖官方 `Od(W)` 能力判断。当前模型
 
 这一步很关键。只改 `app.asar` 内容而不更新 integrity，Electron 可能在启动或加载资源时认为归档被篡改。
 
-### 9. 重新签名
+### 11. 重新签名
 
 修改 app bundle 后，原签名必然失效。脚本会对整个 Claude.app 重新做本机 ad-hoc 签名。
 
@@ -252,7 +315,7 @@ com.apple.security.virtualization
 
 如果原始应用没有这个权限，脚本会拒绝继续，要求先恢复或重装官方 Claude.app。
 
-### 10. 清除隔离属性
+### 12. 清除隔离属性
 
 脚本会执行：
 
@@ -262,7 +325,7 @@ xattr -dr com.apple.quarantine /Applications/Claude.app
 
 这用于减少 macOS 的“应用已损坏”“无法验证开发者”等提示。清除隔离属性不能替代签名，两个步骤都需要保留。
 
-### 11. 用户语言配置
+### 13. 用户语言配置
 
 脚本会写入两个 Claude 配置目录：
 
@@ -300,7 +363,7 @@ en-US
 
 这样即使 Claude 内部读取的是系统语言偏好，也会优先拿到中文。
 
-### 12. 备份和替换
+### 14. 备份和替换
 
 脚本不会直接覆盖原应用。安装前会生成时间戳备份：
 
