@@ -1145,6 +1145,15 @@ def install_statsig_locale(app: Path) -> None:
 def sign_path(path: Path, entitlements_dir: Path) -> None:
     entitlements = load_entitlements(path)
     if entitlements:
+        # Ad-hoc signatures cannot legitimately claim Anthropic's Team ID.
+        # Newer macOS builds can kill the app at launch when these restricted
+        # identifiers remain after local re-signing.
+        for restricted_key in [
+            "com.apple.application-identifier",
+            "com.apple.developer.team-identifier",
+            "keychain-access-groups",
+        ]:
+            entitlements.pop(restricted_key, None)
         # Ad-hoc signatures do not have a real Team ID. Under hardened runtime,
         # Electron's main process otherwise fails library validation when it loads
         # bundled frameworks, even when the whole bundle is signed consistently.
@@ -1206,9 +1215,13 @@ def resign_app(app: Path) -> None:
 
 
 def clear_quarantine(app: Path) -> None:
-    result = run(["xattr", "-dr", "com.apple.quarantine", str(app)], check=False)
-    if result.returncode == 0:
-        print("Cleared Gatekeeper quarantine attribute")
+    cleared: list[str] = []
+    for attr in ["com.apple.quarantine", "com.apple.provenance"]:
+        result = run(["xattr", "-dr", attr, str(app)], check=False)
+        if result.returncode == 0:
+            cleared.append(attr)
+    if cleared:
+        print(f"Cleared Gatekeeper attributes: {', '.join(cleared)}")
 
 
 def set_locale_config(config: Path) -> None:
