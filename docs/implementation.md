@@ -169,7 +169,7 @@ opus[1m]
 
 1. 本项目不修改 `~/.claude/settings.json` 中的 `model` 字段。
 2. 前端模型识别函数会被补丁成：如果当前模型是 `opus` 或 `opus[1m]`，并且第三方网关返回了非空模型列表，就把 `opus[1m]` 视为有效模型，但返回值仍然是 `opus[1m]`。
-3. Code 页面模型菜单会固定重建为 `Opus 4.71M` 和 `Kimi-k2.6` 两项，再追加完整强度菜单。
+3. Code 页面模型菜单会固定重建为 `Opus 4.71M` 和 `Kimi-k2.6` 两项，再追加完整强度菜单；新打开时默认 `Opus 4.71M · 最大`。
 4. 默认对话和 Claude Code 分别走 `baku_model` 与 `ccr_model` / `cowork_model` 路径。本项目会同时补丁这两条路径，普通默认对话不再回落到 `Sonnet 4.6`。
 
 补丁后的关键逻辑等价于：
@@ -200,15 +200,15 @@ Code 页面强度菜单不再只依赖官方 `Od(W)` 能力判断。当前模型
 低 / 中 / 高 / 超高 / 最大
 ```
 
-选择强度仍走原生 `setEffortLevel` / `hs(e)` 流程，不另建第二套 localStorage 强度系统。创建或切换会话时，`effort` 对 Opus 和 Kimi 都会继续传递。
+默认强度固定为 `最大`。Code 会使用补丁专用键 `ccd-effort-level-cn` / `epitaxy_effort_level_cn`，Cowork 使用 `cowork_effort_level_cn`，避免旧电脑里的 `high` 缓存继续覆盖新默认。用户手动选择强度后仍走原生 `setEffortLevel` / `hs(e)` 流程；创建或切换会话时，`effort` 对 Opus 和 Kimi 都会继续传递。
 
 普通对话模型菜单仍然需要读取模型候选项上的能力元数据。因此固定 Opus 项不能只写 `{ model, name }`，必须保留 `thinking_modes` 等字段。当前实现会从网关返回的模型列表中寻找可复用的 Opus 或支持思考模式的模型项作为模板，再生成固定的 `Opus 4.71M` 入口。
 
-底部模型按钮的强度标签还会走另一处 `Gft()` 模式读取逻辑，它读取的是原始 `allModelOptions`，不一定包含固定注入后的 `opus[1m]`。因此补丁也会让 `Gft()` 在当前模型为 `opus` / `opus[1m]` 且原始列表找不到时，回退到带 `thinking_modes` 的模型模板，保证 `Opus 4.71M · 高` 这类显示不丢失。
+底部模型按钮的强度标签还会走另一处 `Gft()` 模式读取逻辑，它读取的是原始 `allModelOptions`，不一定包含固定注入后的 `opus[1m]`。因此补丁也会让 `Gft()` 在当前模型为 `opus` / `opus[1m]` 且原始列表找不到时，回退到带 `thinking_modes` 的模型模板，保证 `Opus 4.71M · 最大` 这类显示不丢失。
 
 底部触发器本身也有显示对象兜底：如果当前模型或默认模型指向 Opus，但候选列表暂时没有对应显示项，会临时使用 `{ model: "opus[1m]", name: "Opus 4.71M" }` 渲染按钮，防止只剩强度标签。
 
-最终渲染前还会检查 `Vft(W)` 的结果。如果显示名为空，会兜底使用 `Opus 4.71M`，保留原本计算出来的强度标签，避免再次出现只有 `· 高` 的状态。
+最终渲染前还会检查 `Vft(W)` 的结果。如果显示名为空，会兜底使用 `Opus 4.71M`，保留原本计算出来的强度标签，避免再次出现只有 `· 高` 或 `· 最大` 的状态。
 
 模型按钮组件 `Wft()` 内部也有同样兜底：如果格式化结果为空，直接渲染 `Opus 4.71M`。
 
@@ -239,6 +239,7 @@ Claude Desktop 更新后，前端 bundle 文件名和压缩变量名经常变化
 7. `超高` 和 `最大` 必须可点击，选择后底部标签要同步更新。
 8. 新版本如果把共享模型选择器从旧 `Wft/Vft/ogt` 改到新函数，必须补丁新的共享选择器，而不是只修旧 anchor。
 9. Code 新建会话权限模式必须默认 `绕过权限`，不能因为新版存储 helper 或旧电脑缓存回到 `接受编辑`。
+10. Code 和 Cowork 新打开时必须默认 `Opus 4.71M · 最大`，不能被旧 sticky model、旧 session 默认或旧强度缓存改成 `Kimi-k2.6 · 高`。
 
 如果用户要安装官方原版，不能直接从 DMG 覆盖当前汉化版。补丁版 app 经过本地重签名、xattr 清理和整包替换，另一台电脑上还可能叠加运行中占用、锁定标记或内部权限差异。Finder 覆盖 app bundle 时会逐项复制，遇到内部条目不可写就会报“必须跳过某些项目”。维护策略是先运行 `prepare_official_update.command` 或 `--prepare-official-update`，只解除当前 `/Applications/Claude.app` 的锁定、扩展属性、owner 和用户写权限，然后让用户从官方 DMG 正常拖入覆盖。该流程不删除、不移动 app，也不触碰 `~/Library/Application Support/Claude*` 下的 API、网关和模型配置。
 
@@ -246,10 +247,11 @@ Claude Desktop 更新后，前端 bundle 文件名和压缩变量名经常变化
 
 - Cowork/普通入口：共享模型选择器 `Jbt`，固定重建两项模型，并移除 `Legacy Model` fallback 对当前菜单的影响。
 - `1.6608.2` 中 `Jbt` 从旧的外层 `conversationUuid` 组件拆成 `Jbt=({models:e,currentModelOption...})` 共享列表组件，外层配置仍负责 `Q/X/J`、当前模型和强度 section。脚本必须同时识别两种结构。
-- Cowork 强度：`Jbt` 只在 Code 传入 `ccdEffortSection` 时有原生强度 section；Cowork 不传该 section，因此补丁会在 `Jbt` 内增加 fallback section。只要原生 section 缺失，就无条件使用 fallback，不再依赖 `activeMode` 字符串判断。默认值为 `high`，显示为“高”，选中后写入 `localStorage["cowork_effort_level"]` 并派发 `cowork-effort-change`。
+- Cowork 默认：共享选择器内部把初始模型固定为 `opus[1m]`，旧 sticky 里的 `kimi-for-coding` / `Kimi-k2.6` 只允许通过用户当前点击临时生效，不再作为新打开 Cowork 的默认入口。
+- Cowork 强度：`Jbt` 只在 Code 传入 `ccdEffortSection` 时有原生强度 section；Cowork 不传该 section，因此补丁会在 `Jbt` 内增加 fallback section。只要原生 section 缺失，就无条件使用 fallback，不再依赖 `activeMode` 字符串判断。默认值为 `max`，显示为“最大”，选中后写入补丁专用 `localStorage["cowork_effort_level_cn"]` 并派发 `cowork-effort-change`。
 - Cowork 配置同步：Cowork 配置处监听 `cowork-effort-change`，让 `NT.setYukonSilverConfig({ effort })` 能使用最新强度。这样点击 `超高` 或 `最大` 后，不只更新菜单，也会进入后续会话配置。
 - Cowork 健康横幅：新版 `EQt/yW.Unreachable` 结构下，对 `api.kimi.com` 旧健康状态做隐藏处理。
-- Code 页面：`zm()` 内的 `W/Q/pe/me` 负责模型菜单，`hm()/gm()` 和 `xs` 负责强度菜单；强度必须无条件生成五档，不再依赖 `De`、`Fe`、`Oe` 或本机环境。
+- Code 页面：`zm()` 内的 `W/Q/pe/me` 负责模型菜单，`hm()/gm()` 和 `xs` 负责强度菜单；没有当前界面临时选择时，初始模型固定为 `opus[1m]`，强度固定为 `max`。强度必须无条件生成五档，不再依赖 `De`、`Fe`、`Oe`、旧 `ccd-effort-level` 缓存或本机环境。
 
 ### 9. 升级诊断日志与必过 invariant
 
@@ -275,7 +277,7 @@ Logs/patch-report-YYYYMMDD-HHMMSS.json
 /usr/bin/python3 patch_claude_zh_cn.py --diagnose --app /Applications/Claude.app
 ```
 
-然后看 `latest.json` 的 `required_failures`。如果失败项是 `cowork.fallback_effort`，说明共享选择器强度 fallback 没命中；如果失败项是 `code.full_effort`，说明 Code 的 `xs` 强度构建没有被无条件替换；如果失败项是 `code.permission_default_bypass`，说明默认“绕过权限”补丁没命中新版 bundle；如果是 `syntax.*`，说明 bundle 补丁破坏了 JS 语法，安装流程应当已经中止。
+然后看 `latest.json` 的 `required_failures`。如果失败项是 `cowork.default_opus` / `code.default_opus`，说明默认模型仍可能被旧缓存覆盖；如果是 `cowork.default_max_effort` / `code.default_max_effort`，说明默认最大强度没有命中；如果失败项是 `cowork.fallback_effort`，说明共享选择器强度 fallback 没命中；如果失败项是 `code.full_effort`，说明 Code 的 `xs` 强度构建没有被无条件替换；如果失败项是 `code.permission_default_bypass`，说明默认“绕过权限”补丁没命中新版 bundle；如果是 `syntax.*`，说明 bundle 补丁破坏了 JS 语法，安装流程应当已经中止。
 
 ### 10. app.asar 修改和完整性更新
 

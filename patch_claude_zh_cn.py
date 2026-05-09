@@ -180,7 +180,11 @@ def find_frontend_bundles(app: Path) -> dict[str, Path | None]:
             or "Jbt=({models:e,currentModelOption" in text
         ):
             result["index"] = path
-        if result["code"] is None and 'const um="ccd-effort-level"' in text and "modelExtraSections:xs" in text:
+        if (
+            result["code"] is None
+            and 'const um="ccd-effort-level' in text
+            and "modelExtraSections:xs" in text
+        ):
             result["code"] = path
     return result
 
@@ -497,12 +501,12 @@ def patch_hardcoded_frontend_strings(app: Path) -> None:
         'W||(W=F.find(e=>e.model===L)??(("opus"===V||"opus[1m]"===V||"opus"===L||"opus[1m]"===L)?{model:"opus[1m]",name:"Opus 4.71M",inactive:!1,overflow:!1}:sgt));const G=': 'W||(W=F.find(e=>e.model===L)??(("opus"===V||"opus[1m]"===V||"opus"===L||"opus[1m]"===L)?{model:"opus[1m]",name:"Opus 4.71M",inactive:!1,overflow:!1}:sgt));(\"\"===Vft(W)||\"opus\"===V||\"opus[1m]\"===V||\"opus\"===L||\"opus[1m]\"===L)&&(W={...W,model:\"opus[1m]\",name:\"Opus 4.71M\",inactive:!1,overflow:!1});const G=',
         '""===Vft(W)&&(W={model:"opus[1m]",name:"Opus 4.7 1M",inactive:!1,overflow:!1});const G=': '(""===Vft(W)||"opus"===V||"opus[1m]"===V||"opus"===L||"opus[1m]"===L)&&(W={...W,model:"opus[1m]",name:"Opus 4.71M",inactive:!1,overflow:!1});const G=',
         'z=r??A,{allModelOptions:F,mainModels:U,overflowModels:q}=R': 'z=(e=>e==="kimi-for-coding"?"opus[1m]":e)(r??A),{allModelOptions:F,mainModels:U,overflowModels:q}=R',
-        '{activeMode:te}=Gft(z,Z),se=O?void 0:te?.label,{toggleConversationSetting:ne}=O6({source:"modelSelector"})': '{activeMode:te}=Gft(z,Z),[me,he]=n.useState(()=>{try{return localStorage.getItem("cowork_effort_level")||"high"}catch{return"high"}}),fe=n.useMemo(()=>_??{current:me,options:[{value:"low",label:"低"},{value:"medium",label:"中"},{value:"high",label:"高"},{value:"xhigh",label:"超高"},{value:"max",label:"最大"}],onSelect:e=>{he(e);try{localStorage.setItem("cowork_effort_level",e),window.dispatchEvent(new CustomEvent("cowork-effort-change",{detail:e}))}catch{}}},[_,me]),se=O?{low:"低",medium:"中",high:"高",xhigh:"超高",max:"最大"}[me]:te?.label,{toggleConversationSetting:ne}=O6({source:"modelSelector"})',
+        '{activeMode:te}=Gft(z,Z),se=O?void 0:te?.label,{toggleConversationSetting:ne}=O6({source:"modelSelector"})': '{activeMode:te}=Gft(z,Z),[me,he]=n.useState(()=>{try{return localStorage.getItem("cowork_effort_level_cn")||"max"}catch{return"max"}}),fe=n.useMemo(()=>_??{current:me,options:[{value:"low",label:"低"},{value:"medium",label:"中"},{value:"high",label:"高"},{value:"xhigh",label:"超高"},{value:"max",label:"最大"}],onSelect:e=>{he(e);try{localStorage.setItem("cowork_effort_level_cn",e),window.dispatchEvent(new CustomEvent("cowork-effort-change",{detail:e}))}catch{}}},[_,me]),se=O?{low:"低",medium:"中",high:"高",xhigh:"超高",max:"最大"}[me]:te?.label,{toggleConversationSetting:ne}=O6({source:"modelSelector"})',
         '_&&a.jsxs(a.Fragment,{children:[a.jsx(ol,{className:IR}),a.jsx("div",{className:"text-xs text-text-500 pt-2 pb-1 px-2",children:a.jsx(c,{defaultMessage:"强度",id:"VKZ/U8vAsk"})}),a.jsx(igt,{section:_,compactMenu:j})]})': 'fe&&a.jsxs(a.Fragment,{children:[a.jsx(ol,{className:IR}),a.jsx("div",{className:"text-xs text-text-500 pt-2 pb-1 px-2",children:a.jsx(c,{defaultMessage:"强度",id:"VKZ/U8vAsk"})}),a.jsx(igt,{section:fe,compactMenu:j})]})',
-        'fe&&a.jsxs(a.Fragment,{children:[a.jsx(ol,{className:IR}),a.jsx("div",{className:"text-xs text-text-500 pt-2 pb-1 px-2",children:a.jsx(c,{defaultMessage:"强度",id:"VKZ/U8vAsk"})}),a.jsx(igt,{section:fe,compactMenu:j})]})': 'a.jsxs(a.Fragment,{children:[a.jsx(ol,{className:IR}),a.jsx("div",{className:"text-xs text-text-500 pt-2 pb-1 px-2",children:a.jsx(c,{defaultMessage:"强度",id:"VKZ/U8vAsk"})}),a.jsx(igt,{section:{current:me,options:[{value:"low",label:"低"},{value:"medium",label:"中"},{value:"high",label:"高"},{value:"xhigh",label:"超高"},{value:"max",label:"最大"}],onSelect:e=>{he(e);try{localStorage.setItem("cowork_effort_level",e),window.dispatchEvent(new CustomEvent("cowork-effort-change",{detail:e}))}catch{}}},compactMenu:j})]})',
+        'fe&&a.jsxs(a.Fragment,{children:[a.jsx(ol,{className:IR}),a.jsx("div",{className:"text-xs text-text-500 pt-2 pb-1 px-2",children:a.jsx(c,{defaultMessage:"强度",id:"VKZ/U8vAsk"})}),a.jsx(igt,{section:fe,compactMenu:j})]})': 'a.jsxs(a.Fragment,{children:[a.jsx(ol,{className:IR}),a.jsx("div",{className:"text-xs text-text-500 pt-2 pb-1 px-2",children:a.jsx(c,{defaultMessage:"强度",id:"VKZ/U8vAsk"})}),a.jsx(igt,{section:{current:me,options:[{value:"low",label:"低"},{value:"medium",label:"中"},{value:"high",label:"高"},{value:"xhigh",label:"超高"},{value:"max",label:"最大"}],onSelect:e=>{he(e);try{localStorage.setItem("cowork_effort_level_cn",e),window.dispatchEvent(new CustomEvent("cowork-effort-change",{detail:e}))}catch{}}},compactMenu:j})]})',
         'const Wft=({model:e,compact:t=!1,thinkingLabel:s})=>{const n=Vft(e,{mutedSuffix:!0});return': 'const Wft=({model:e,compact:t=!1,thinkingLabel:s})=>{let n=Vft(e,{mutedSuffix:!0});""===n&&(n="Opus 4.71M");return',
         'function Vft(e,t={}){const s=e.model?Z9(e.model):null;': 'function Vft(e,t={}){if("opus[1m]"===e?.model||"opus"===e?.model)return"Opus 4.71M";const s=e.model?Z9(e.model):null;',
-        'j=pc("cowork_effort_level","medium",Wu),M=pc("cowork_model",vJt,yJt),': 'j=(()=>{const e=pc("cowork_effort_level","high",Wu),[t,s]=n.useState(()=>{try{return localStorage.getItem("cowork_effort_level")||e}catch{return e}});return n.useEffect(()=>{const e=()=>{try{s(localStorage.getItem("cowork_effort_level")||"high")}catch{s("high")}};if("undefined"==typeof window)return;e();return window.addEventListener("cowork-effort-change",e),()=>window.removeEventListener("cowork-effort-change",e)},[]),t})(),M=pc("cowork_model",vJt,yJt),',
+        'j=pc("cowork_effort_level","medium",Wu),M=pc("cowork_model",vJt,yJt),': 'j=(()=>{const e=pc("cowork_effort_level_cn","max",Wu),[t,s]=n.useState(()=>{try{return localStorage.getItem("cowork_effort_level_cn")||e}catch{return e}});return n.useEffect(()=>{const e=()=>{try{s(localStorage.getItem("cowork_effort_level_cn")||"max")}catch{s("max")}};if("undefined"==typeof window)return;e();return window.addEventListener("cowork-effort-change",e),()=>window.removeEventListener("cowork-effort-change",e)},[]),t})(),M=pc("cowork_model",vJt,yJt),',
         '"Scheduled"': '"定时任务"',
         '"Pinned"': '"已固定"',
         '"What’s up next?"': '"接下来做什么？"',
@@ -717,7 +721,7 @@ def patch_epitaxy_cache_bust(ion_dist_dir: Path, assets_dir: Path) -> tuple[int,
                 and "modelExtraSections:gs" in path.read_text(encoding="utf-8", errors="ignore")
             )
             or (
-                'const um="ccd-effort-level"' in path.read_text(encoding="utf-8", errors="ignore")
+                'const um="ccd-effort-level' in path.read_text(encoding="utf-8", errors="ignore")
                 and "modelExtraSections:xs" in path.read_text(encoding="utf-8", errors="ignore")
             )
         ),
@@ -793,9 +797,7 @@ def patch_cowork_model_menu(assets_dir: Path) -> tuple[int, int]:
         re.DOTALL,
     )
     jbt_model_target = (
-        'z=(e=>{const t=String(e??"").toLowerCase();'
-        'if("kimi-for-coding"===t||"kimi-k2.6"===t||/kimi/i.test(String(e))&&/k2\\.6/i.test(String(e)))return"kimi-for-coding";'
-        'if("opus"===t||"opus[1m]"===t)return"opus[1m]";return"opus[1m]"})(r??A),'
+        'z="opus[1m]",'
         '{allModelOptions:F}=R,U=[],q=[],B=ud("sticky_model_selector"),[$,V]=n.useState(null),H=$??z,'
         'rr={...(F.find(e=>"opus[1m]"===e.model)??F.find(e=>/opus/i.test(e.model)&&/\\[1m\\]/i.test(e.model))??F.find(e=>e.thinking_modes?.length)??{}),model:"opus[1m]",name:"Opus 4.71M",name_i18n_key:void 0,inactive:!1,overflow:!1},'
         'oo=F.find(e=>{const t=String(e.model??"").toLowerCase(),s=String(e.name??"").toLowerCase();'
@@ -818,16 +820,16 @@ def patch_cowork_model_menu(assets_dir: Path) -> tuple[int, int]:
     )
     jbt_effort_re = re.compile(
         r'\{activeMode:ee\}=Fbt\(z,K\),'
-        r'(?:\[cw,Sw\]=n\.useState\(\(\)=>\{try\{return localStorage\.getItem\("cowork_effort_level"\)\|\|"high"\}catch\{return"high"\}\}\),'
-        r'Fw=n\.useMemo\(\(\)=>_\?\?(?:\("cowork"===I\?)?\{current:cw,options:\[\{value:"low",label:"低"\},\{value:"medium",label:"中"\},\{value:"high",label:"高"\},\{value:"xhigh",label:"超高"\},\{value:"max",label:"最大"\}\],onSelect:e=>\{Sw\(e\);try\{localStorage\.setItem\("cowork_effort_level",e\),window\.dispatchEvent\(new CustomEvent\("cowork-effort-change",\{detail:e\}\)\)\}catch\{\}\}\}(?::void 0\))?,\[_,cw(?:,I)?\]\),)?'
+        r'(?:\[cw,Sw\]=n\.useState\(\(\)=>\{try\{return localStorage\.getItem\("cowork_effort_level(?:_cn)?"\)\|\|"(?:high|max)"\}catch\{return"(?:high|max)"\}\}\),'
+        r'Fw=n\.useMemo\(\(\)=>_\?\?(?:\("cowork"===I\?)?\{current:cw,options:\[\{value:"low",label:"低"\},\{value:"medium",label:"中"\},\{value:"high",label:"高"\},\{value:"xhigh",label:"超高"\},\{value:"max",label:"最大"\}\],onSelect:e=>\{Sw\(e\);try\{localStorage\.setItem\("cowork_effort_level(?:_cn)?",e\),window\.dispatchEvent\(new CustomEvent\("cowork-effort-change",\{detail:e\}\)\)\}catch\{\}\}\}(?::void 0\))?,\[_,cw(?:,I)?\]\),)?'
         r'te=.*?,\{toggleConversationSetting:se\}=E7\(\{source:"modelSelector"\}\)',
         re.DOTALL,
     )
     jbt_effort_target = (
         '{activeMode:ee}=Fbt(z,K),'
-        '[cw,Sw]=n.useState(()=>{try{return localStorage.getItem("cowork_effort_level")||"high"}catch{return"high"}}),'
+        '[cw,Sw]=n.useState(()=>{try{return localStorage.getItem("cowork_effort_level_cn")||"max"}catch{return"max"}}),'
         'Fw=n.useMemo(()=>_??{current:cw,options:[{value:"low",label:"低"},{value:"medium",label:"中"},{value:"high",label:"高"},{value:"xhigh",label:"超高"},{value:"max",label:"最大"}],'
-        'onSelect:e=>{Sw(e);try{localStorage.setItem("cowork_effort_level",e),window.dispatchEvent(new CustomEvent("cowork-effort-change",{detail:e}))}catch{}}},[_,cw]),'
+        'onSelect:e=>{Sw(e);try{localStorage.setItem("cowork_effort_level_cn",e),window.dispatchEvent(new CustomEvent("cowork-effort-change",{detail:e}))}catch{}}},[_,cw]),'
         'te=Fw?{low:"低",medium:"中",high:"高",xhigh:"超高",max:"最大"}[Fw.current]??ee?.label:O?void 0:ee?.label,'
         '{toggleConversationSetting:se}=E7({source:"modelSelector"})'
     )
@@ -860,10 +862,13 @@ def patch_cowork_model_menu(assets_dir: Path) -> tuple[int, int]:
             'return t.sessionModel??t.sessionData?.session_context?.model})??null'
         ),
         '_=yc("cowork_effort_level","medium",Mp),j=yc("cowork_model",T0t,I0t),': (
-            '_=(()=>{const e=yc("cowork_effort_level","high",Mp),[t,s]=n.useState(()=>{try{return localStorage.getItem("cowork_effort_level")||e}catch{return e}});return n.useEffect(()=>{const e=()=>{try{s(localStorage.getItem("cowork_effort_level")||"high")}catch{s("high")}};if("undefined"==typeof window)return;e();return window.addEventListener("cowork-effort-change",e),()=>window.removeEventListener("cowork-effort-change",e)},[]),t})(),j=yc("cowork_model",T0t,I0t),'
+            '_=(()=>{const e=yc("cowork_effort_level_cn","max",Mp),[t,s]=n.useState(()=>{try{return localStorage.getItem("cowork_effort_level_cn")||e}catch{return e}});return n.useEffect(()=>{const e=()=>{try{s(localStorage.getItem("cowork_effort_level_cn")||"max")}catch{s("max")}};if("undefined"==typeof window)return;e();return window.addEventListener("cowork-effort-change",e),()=>window.removeEventListener("cowork-effort-change",e)},[]),t})(),j=yc("cowork_model",T0t,I0t),'
         ),
         '_=(()=>{const e=yc("cowork_effort_level","high",Mp),[t,s]=n.useState(()=>{try{return localStorage.getItem("cowork_effort_level")||e}catch{return e}});return n.useEffect(()=>{const e=()=>{try{s(localStorage.getItem("cowork_effort_level")||"high")}catch{s("high")}};if("undefined"==typeof window)return;e();return window.addEventListener("cowork-effort-change",e),()=>window.removeEventListener("cowork-effort-change",e)},[]),t})(),j=yc("cowork_model",T0t,I0t),': (
-            '_=(()=>{const e=yc("cowork_effort_level","high",Mp),[t,s]=n.useState(()=>{try{return localStorage.getItem("cowork_effort_level")||e}catch{return e}});return n.useEffect(()=>{const e=()=>{try{s(localStorage.getItem("cowork_effort_level")||"high")}catch{s("high")}};if("undefined"==typeof window)return;e();return window.addEventListener("cowork-effort-change",e),()=>window.removeEventListener("cowork-effort-change",e)},[]),t})(),j=yc("cowork_model",T0t,I0t),'
+            '_=(()=>{const e=yc("cowork_effort_level_cn","max",Mp),[t,s]=n.useState(()=>{try{return localStorage.getItem("cowork_effort_level_cn")||e}catch{return e}});return n.useEffect(()=>{const e=()=>{try{s(localStorage.getItem("cowork_effort_level_cn")||"max")}catch{s("max")}};if("undefined"==typeof window)return;e();return window.addEventListener("cowork-effort-change",e),()=>window.removeEventListener("cowork-effort-change",e)},[]),t})(),j=yc("cowork_model",T0t,I0t),'
+        ),
+        '_=(()=>{const e=yc("cowork_effort_level_cn","max",Mp),[t,s]=n.useState(()=>{try{return localStorage.getItem("cowork_effort_level_cn")||e}catch{return e}});return n.useEffect(()=>{const e=()=>{try{s(localStorage.getItem("cowork_effort_level_cn")||"max")}catch{s("max")}};if("undefined"==typeof window)return;e();return window.addEventListener("cowork-effort-change",e),()=>window.removeEventListener("cowork-effort-change",e)},[]),t})(),j=yc("cowork_model",T0t,I0t),': (
+            '_=(()=>{const e=yc("cowork_effort_level_cn","max",Mp),[t,s]=n.useState(()=>{try{return localStorage.getItem("cowork_effort_level_cn")||e}catch{return e}});return n.useEffect(()=>{const e=()=>{try{s(localStorage.getItem("cowork_effort_level_cn")||"max")}catch{s("max")}};if("undefined"==typeof window)return;e();return window.addEventListener("cowork-effort-change",e),()=>window.removeEventListener("cowork-effort-change",e)},[]),t})(),j=yc("cowork_model",T0t,I0t),'
         ),
     }
 
@@ -879,10 +884,16 @@ def patch_cowork_model_menu(assets_dir: Path) -> tuple[int, int]:
         r'J=Z\?q\.filter\(e=>e\.model!==H\):q,',
         re.DOTALL,
     )
+    jbt_v2_already_model_re = re.compile(
+        r'z=\(e=>\{const t=String\(e\?\?""\)\.toLowerCase\(\);'
+        r'.*?return"opus\[1m\]"\}\)\(r\?\?A\),'
+        r'\{allModelOptions:F\}=R,U=\[\],q=\[\],'
+        r'B=ud\("sticky_model_selector"\),\[\$,V\]=n\.useState\(null\),H=\$\?\?z,'
+        r'rr=.*?const Y=Rbt\(\),Z=!h&&!O,Q=\[rr,cc\],X=\[\],J=\[\],',
+        re.DOTALL,
+    )
     jbt_v2_model_target = (
-        'z=(e=>{const t=String(e??"").toLowerCase();'
-        'if("kimi-for-coding"===t||"kimi-k2.6"===t||/kimi/i.test(String(e))&&/k2\\.6/i.test(String(e)))return"kimi-for-coding";'
-        'if("opus"===t||"opus[1m]"===t)return"opus[1m]";return"opus[1m]"})(r??A),'
+        'z="opus[1m]",'
         '{allModelOptions:F}=R,U=[],q=[],B=ud("sticky_model_selector"),[$,V]=n.useState(null),H=$??z,'
         'rr={...(F.find(e=>"opus[1m]"===e.model)??F.find(e=>/opus/i.test(e.model)&&/\\[1m\\]/i.test(e.model))??F.find(e=>e.thinking_modes?.length)??{}),model:"opus[1m]",name:"Opus 4.71M",name_i18n_key:void 0,inactive:!1,overflow:!1},'
         'oo=F.find(e=>{const t=String(e.model??"").toLowerCase(),s=String(e.name??"").toLowerCase();'
@@ -894,15 +905,18 @@ def patch_cowork_model_menu(assets_dir: Path) -> tuple[int, int]:
         'const Y=Rbt(),Z=!h&&!O,Q=[rr,cc],X=[],J=[],'
     )
     jbt_v2_effort_re = re.compile(
-        r'\{activeMode:ee\}=qbt\(z,K\),te=O\?void 0:ee\?\.label,'
+        r'\{activeMode:ee\}=qbt\(z,K\),'
+        r'(?:\[cw,Sw\]=n\.useState\(\(\)=>\{try\{return localStorage\.getItem\("cowork_effort_level(?:_cn)?"\)\|\|"(?:high|max)"\}catch\{return"(?:high|max)"\}\}\),'
+        r'Fw=n\.useMemo\(\(\)=>_\?\?\{current:cw,options:\[\{value:"low",label:"低"\},\{value:"medium",label:"中"\},\{value:"high",label:"高"\},\{value:"xhigh",label:"超高"\},\{value:"max",label:"最大"\}\],onSelect:e=>\{Sw\(e\);try\{localStorage\.setItem\("cowork_effort_level(?:_cn)?",e\),window\.dispatchEvent\(new CustomEvent\("cowork-effort-change",\{detail:e\}\)\)\}catch\{\}\}\},\[_,cw\]\),)?'
+        r'te=.*?,'
         r'\{toggleConversationSetting:se\}=E7\(\{source:"modelSelector"\}\)',
         re.DOTALL,
     )
     jbt_v2_effort_target = (
         '{activeMode:ee}=qbt(z,K),'
-        '[cw,Sw]=n.useState(()=>{try{return localStorage.getItem("cowork_effort_level")||"high"}catch{return"high"}}),'
+        '[cw,Sw]=n.useState(()=>{try{return localStorage.getItem("cowork_effort_level_cn")||"max"}catch{return"max"}}),'
         'Fw=n.useMemo(()=>_??{current:cw,options:[{value:"low",label:"低"},{value:"medium",label:"中"},{value:"high",label:"高"},{value:"xhigh",label:"超高"},{value:"max",label:"最大"}],'
-        'onSelect:e=>{Sw(e);try{localStorage.setItem("cowork_effort_level",e),window.dispatchEvent(new CustomEvent("cowork-effort-change",{detail:e}))}catch{}}},[_,cw]),'
+        'onSelect:e=>{Sw(e);try{localStorage.setItem("cowork_effort_level_cn",e),window.dispatchEvent(new CustomEvent("cowork-effort-change",{detail:e}))}catch{}}},[_,cw]),'
         'te=Fw?{low:"低",medium:"中",high:"高",xhigh:"超高",max:"最大"}[Fw.current]??ee?.label:O?void 0:ee?.label,'
         '{toggleConversationSetting:se}=E7({source:"modelSelector"})'
     )
@@ -930,7 +944,16 @@ def patch_cowork_model_menu(assets_dir: Path) -> tuple[int, int]:
     jbt_v2_state_source = 'Y(e.model)||se("compass_mode",null),B||V(e.model),D(e.model),i?.(e)}'
     jbt_v2_state_target = 'Y(e.model)||se("compass_mode",null),V(e.model),D(e.model),i?.(e)}'
     cowork_effort_config_re = re.compile(
-        r'_=yc\("cowork_effort_level","medium",([A-Za-z0-9_$]+)\),'
+        r'_=yc\("cowork_effort_level(?:_cn)?","(?:medium|high|max)",([A-Za-z0-9_$]+)\),'
+        r'j=yc\("cowork_model",([^)]*)\),',
+        re.DOTALL,
+    )
+    cowork_effort_wrapper_re = re.compile(
+        r'_=\(\(\)=>\{const e=yc\("cowork_effort_level(?:_cn)?","(?:high|max)",([A-Za-z0-9_$]+)\),'
+        r'\[t,s\]=n\.useState\(\(\)=>\{try\{return localStorage\.getItem\("cowork_effort_level(?:_cn)?"\)\|\|e\}catch\{return e\}\}\);'
+        r'return n\.useEffect\(\(\)=>\{const e=\(\)=>\{try\{s\(localStorage\.getItem\("cowork_effort_level(?:_cn)?"\)\|\|"(?:high|max)"\)\}catch\{s\("(?:high|max)"\)\}\};'
+        r'if\("undefined"==typeof window\)return;e\(\);return window\.addEventListener\("cowork-effort-change",e\),'
+        r'\(\)=>window\.removeEventListener\("cowork-effort-change",e\)\},\[\]\),t\}\)\(\),'
         r'j=yc\("cowork_model",([^)]*)\),',
         re.DOTALL,
     )
@@ -939,9 +962,9 @@ def patch_cowork_model_menu(assets_dir: Path) -> tuple[int, int]:
         validator = match.group(1)
         cowork_model_args = match.group(2)
         return (
-            f'_=(()=>{{const e=yc("cowork_effort_level","high",{validator}),'
-            '[t,s]=n.useState(()=>{try{return localStorage.getItem("cowork_effort_level")||e}catch{return e}});'
-            'return n.useEffect(()=>{const e=()=>{try{s(localStorage.getItem("cowork_effort_level")||"high")}catch{s("high")}};'
+            f'_=(()=>{{const e=yc("cowork_effort_level_cn","max",{validator}),'
+            '[t,s]=n.useState(()=>{try{return localStorage.getItem("cowork_effort_level_cn")||e}catch{return e}});'
+            'return n.useEffect(()=>{const e=()=>{try{s(localStorage.getItem("cowork_effort_level_cn")||"max")}catch{s("max")}};'
             'if("undefined"==typeof window)return;e();return window.addEventListener("cowork-effort-change",e),'
             '()=>window.removeEventListener("cowork-effort-change",e)},[]),t})(),'
             f'j=yc("cowork_model",{cowork_model_args}),'
@@ -955,6 +978,9 @@ def patch_cowork_model_menu(assets_dir: Path) -> tuple[int, int]:
         count = 0
         patched, n = jbt_v2_model_re.subn(jbt_v2_model_target, patched, count=1)
         count += n
+        if not n:
+            patched, n = jbt_v2_already_model_re.subn(jbt_v2_model_target, patched, count=1)
+            count += n
         patched, n = jbt_v2_effort_re.subn(jbt_v2_effort_target, patched, count=1)
         count += n
         patched, n = jbt_v2_handler_re.subn(jbt_v2_handler_target, patched, count=1)
@@ -970,6 +996,8 @@ def patch_cowork_model_menu(assets_dir: Path) -> tuple[int, int]:
             if occurrences:
                 patched = patched.replace(source, target)
                 count += occurrences
+        patched, n = cowork_effort_wrapper_re.subn(cowork_effort_config_target, patched, count=1)
+        count += n
         patched, n = cowork_effort_config_re.subn(cowork_effort_config_target, patched, count=1)
         count += n
         if patched != text:
@@ -1001,6 +1029,8 @@ def patch_cowork_model_menu(assets_dir: Path) -> tuple[int, int]:
             if occurrences:
                 patched = patched.replace(source, target)
                 count += occurrences
+        patched, n = cowork_effort_wrapper_re.subn(cowork_effort_config_target, patched, count=1)
+        count += n
         patched, n = cowork_effort_config_re.subn(cowork_effort_config_target, patched, count=1)
         count += n
         if patched != text:
@@ -1040,10 +1070,7 @@ def patch_cowork_model_menu(assets_dir: Path) -> tuple[int, int]:
         ),
     ]
     ogt_model_target = (
-        'z=(e=>{const t=String(e??"").toLowerCase();'
-        'if("kimi-for-coding"===t||/kimi/i.test(String(e))&&/k2\\.6/i.test(String(e)))return"kimi-for-coding";'
-        'if("opus"===t||"opus[1m]"===t)return"opus[1m]";'
-        'return"opus[1m]"})(r??A),{allModelOptions:F}=R,'
+        'z="opus[1m]",{allModelOptions:F}=R,'
         'B=Xc("sticky_model_selector"),[$,H]=n.useState(null),'
         'ke=e=>{const t=String(e??"").toLowerCase();return"kimi-for-coding"===t||/kimi/i.test(String(e))&&/k2\\.6/i.test(String(e))?"kimi-for-coding":"opus[1m]"},'
         'Ce=F.find(e=>{const t=String(e.model??"").toLowerCase(),s=String(e.name??"").toLowerCase();'
@@ -1063,8 +1090,8 @@ def patch_cowork_model_menu(assets_dir: Path) -> tuple[int, int]:
     )
     effort_target = (
         '{activeMode:te}=Gft(z,Z),'
-        '[me,he]=n.useState(()=>{try{return localStorage.getItem("cowork_effort_level")||"high"}catch{return"high"}}),'
-        'fe=n.useMemo(()=>{const e=e=>{he(e);try{localStorage.setItem("cowork_effort_level",e),'
+        '[me,he]=n.useState(()=>{try{return localStorage.getItem("cowork_effort_level_cn")||"max"}catch{return"max"}}),'
+        'fe=n.useMemo(()=>{const e=e=>{he(e);try{localStorage.setItem("cowork_effort_level_cn",e),'
         'window.dispatchEvent(new CustomEvent("cowork-effort-change",{detail:e}))}catch{}},'
         't=_?.current??me,s=_?.onSelect??e;return{current:t,'
         'options:[{value:"low",label:"低"},{value:"medium",label:"中"},{value:"high",label:"高"},{value:"xhigh",label:"超高"},{value:"max",label:"最大"}],'
@@ -1167,7 +1194,7 @@ def patch_epitaxy_model_menu(assets_dir: Path) -> tuple[int, int]:
         'if("opus"===t||"opus[1m]"===t)return"opus[1m]";'
         'const s=M.find(e=>String(e.model??"").toLowerCase()===t||String(e.name??"").toLowerCase()===t);'
         'return s?s.model:(/kimi/i.test(String(e))&&/k2\\.6/i.test(String(e))?"kimi-for-coding":"opus[1m]")'
-        '})(H??O??L??K??k),'
+        '})(H??"opus[1m]"),'
         'V=M.find(e=>e.model===W),'
         'G=V?null:("opus"===W||"opus[1m]"===W?"Opus 4.71M":'
         '("kimi-for-coding"===W||/kimi/i.test(String(W))&&/k2\\.6/i.test(String(W))?"Kimi-k2.6":st(W))),'
@@ -1207,6 +1234,16 @@ def patch_epitaxy_model_menu(assets_dir: Path) -> tuple[int, int]:
         'trailing:c.jsx(Tu,{checked:!t&&Ee,disabled:t,"aria-hidden":!0,tabIndex:-1})}]})}return e},[hs,gs,ls,cs,Ee,Pe,s])'
     )
     code_new_replacements = {
+        'const um="ccd-effort-level",fm=': 'const um="ccd-effort-level-cn",fm=',
+        'const um="ccd-effort-level-cn",fm=': 'const um="ccd-effort-level-cn",fm=',
+        'h=p??c??f??function(e){return e.toLowerCase().includes("opus-4-7")?dm()?"xhigh":"high":"medium"}(t),g=h;return{effortLevel:g,spawnEffortLevel:g,setEffortLevel:e.useCallback(e=>{localStorage.setItem(um,e),m(e)},[]),modelSupportsEffort:!0,modelSupportsMaxEffort:!0,modelSupportsXhighEffort:!0}': (
+            'h=p??f??"max",g=h;return{effortLevel:g,spawnEffortLevel:g,setEffortLevel:e.useCallback(e=>{localStorage.setItem(um,e),m(e)},[]),modelSupportsEffort:!0,modelSupportsMaxEffort:!0,modelSupportsXhighEffort:!0}'
+        ),
+        'x=g.success?g.data:void 0,v=h.current!==n&&void 0!==x?x:c,b=!0;return{section:e.useMemo(()=>{const e=fm;return{current:v,options:e.map(e=>({value:e,label:pm[e]})),onSelect:e=>{': (
+            'x=void 0,v=c,b=!0;return{section:e.useMemo(()=>{const e=fm;return{current:v,options:e.map(e=>({value:e,label:pm[e]})),onSelect:e=>{'
+        ),
+        '})(H??O??L??K??k),V=M.find(e=>e.model===W),': '})(H??"opus[1m]"),V=M.find(e=>e.model===W),',
+        '})(H??"opus[1m]"),V=M.find(e=>e.model===W),': '})(H??"opus[1m]"),V=M.find(e=>e.model===W),',
         'pm={low:"Low",medium:"Medium",high:"High",xhigh:"Extra high",max:"Max"}': (
             'pm={low:"低",medium:"中",high:"高",xhigh:"超高",max:"最大"}'
         ),
@@ -1226,7 +1263,7 @@ def patch_epitaxy_model_menu(assets_dir: Path) -> tuple[int, int]:
 
     for path in sorted(assets_dir.glob("*.js")):
         text = path.read_text(encoding="utf-8")
-        if 'const um="ccd-effort-level"' not in text or "modelExtraSections:xs" not in text:
+        if 'const um="ccd-effort-level' not in text or "modelExtraSections:xs" not in text:
             continue
         patched = text
         count = 0
@@ -1274,7 +1311,7 @@ def patch_epitaxy_model_menu(assets_dir: Path) -> tuple[int, int]:
         'const s=M.find(e=>String(e.model??"").toLowerCase()===t||String(e.name??"").toLowerCase()===t);'
         'return s?s.model:(/kimi/i.test(String(e))&&/k2\\.6/i.test(String(e))?'
         '(t==="kimi-k2.6"?"kimi-for-coding":e):"opus[1m]")'
-        '})(U??O??L??K??k),'
+        '})(U??"opus[1m]"),'
         'V=M.find(e=>e.model===W),'
         'G=V?null:("opus"===W||"opus[1m]"===W?"Opus 4.71M":'
         '("kimi-for-coding"===W||/kimi/i.test(String(W))&&/k2\\.6/i.test(String(W))?"Kimi-k2.6":Ge(W))),'
@@ -1320,10 +1357,10 @@ def patch_epitaxy_model_menu(assets_dir: Path) -> tuple[int, int]:
         ),
     ]
     effort_state_target = (
-        '[codeEffort,setCodeEffort]=e.useState(()=>{try{return localStorage.getItem("epitaxy_effort_level")||null}catch{return null}}),'
-        'ms=codeEffort??(Ct.current!==fs&&void 0!==It?It:Ee),'
+        '[codeEffort,setCodeEffort]=e.useState(()=>{try{return localStorage.getItem("epitaxy_effort_level_cn")||"max"}catch{return"max"}}),'
+        'ms=codeEffort??"max",'
         'hs=e.useCallback(t=>{if(t===ms)return;Ct.current=fs,setCodeEffort(t);'
-        'try{localStorage.setItem("epitaxy_effort_level",t)}catch{}'
+        'try{localStorage.setItem("epitaxy_effort_level_cn",t)}catch{}'
         'Ae(t);const e=e=>{a(s.formatMessage({defaultMessage:"Effort change couldn\'t be applied. You can try again.",id:"NiIv1JQ3Vw"}),'
         '{error:e,errorContext:{tags:{source:"epitaxy_set_effort"}},messageForLogging:"Effort change couldn\'t be applied. You can try again."})};'
         'us?Z(us)?.setEffort?.(us.id,t).then(()=>ne(us,{effort:t})).catch(e):'
@@ -1348,6 +1385,8 @@ def patch_epitaxy_model_menu(assets_dir: Path) -> tuple[int, int]:
         'ps=(_e||"opus"===W||"opus[1m]"===W||"Kimi-k2.6"===W)&&(t?!!fs:"bridge"!==is),ms=': f'ps={effort_menu_support},ms=',
         'ps=(_e||"opus"===W||"opus[1m]"===W||/kimi/i.test(String(W))&&/k2\\.6/i.test(String(W)))&&(t?!!fs:"bridge"!==is),ms=': f'ps={effort_menu_support},ms=',
         'ps=(_e||"opus"===W||"opus[1m]"===W||/kimi/i.test(String(W))&&/k2\\.6/i.test(String(W)))&&(t?!!fs:"bridge"!==is),[codeEffort': f'ps={effort_menu_support},[codeEffort',
+        '})(U??O??L??K??k),V=M.find(e=>e.model===W),': '})(U??"opus[1m]"),V=M.find(e=>e.model===W),',
+        '})(U??"opus[1m]"),V=M.find(e=>e.model===W),': '})(U??"opus[1m]"),V=M.find(e=>e.model===W),',
         f'ps={effort_support}&&(t?!!fs:"bridge"!==is),ms=': f'ps={effort_menu_support},ms=',
         f'ps={effort_support}&&(t?!!fs:"bridge"!==is),[codeEffort': f'ps={effort_menu_support},[codeEffort',
         f'ps={effort_menu_support},ms=': f'ps={effort_menu_support},ms=',
@@ -1883,13 +1922,21 @@ def check_frontend_invariants(app: Path, report: PatchReport, *, require: bool =
                 and 'name:"Opus 4.71M"' in text
                 and 'name:"Kimi-k2.6"' in text
             ),
+            "cowork.default_opus": (
+                'z="opus[1m]","' in text
+                or 'z="opus[1m]",{allModelOptions:F}=R' in text
+            ),
             "cowork.fallback_effort": (
-                'cowork_effort_level")||"high"' in text
+                'cowork_effort_level_cn")||"max"' in text
                 and 'Fw=n.useMemo(()=>_??{current:cw' in text
                 and '"cowork"===I?{current:cw' not in text
                 and 'section:Fw' in text
                 and 'value:"xhigh",label:"超高"' in text
                 and 'value:"max",label:"最大"' in text
+            ),
+            "cowork.default_max_effort": (
+                'yc("cowork_effort_level_cn","max"' in text
+                and 'localStorage.getItem("cowork_effort_level_cn")||"max"' in text
             ),
             "cowork.effort_sync": (
                 'window.addEventListener("cowork-effort-change"' in text
@@ -1914,10 +1961,18 @@ def check_frontend_invariants(app: Path, report: PatchReport, *, require: bool =
                 'return[{label:"Opus 4.71M"' in text
                 and '{label:"Kimi-k2.6"' in text
             ),
+            "code.default_opus": (
+                '})(H??"opus[1m]"),' in text
+                or '})(U??"opus[1m]"),' in text
+            ),
             "code.full_effort": (
                 'xs=e.useMemo(()=>{const e=[],t=fm;' in text
                 and 'modelSupportsEffort:!0,modelSupportsMaxEffort:!0,modelSupportsXhighEffort:!0' in text
                 and 'pm={low:"低",medium:"中",high:"高",xhigh:"超高",max:"最大"}' in text
+            ),
+            "code.default_max_effort": (
+                'const um="ccd-effort-level-cn"' in text
+                and ('h=p??f??"max"' in text or 'ms=codeEffort??"max"' in text)
             ),
         }
         for name, ok in checks.items():

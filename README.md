@@ -23,7 +23,7 @@
 - 清除 `com.apple.quarantine` 隔离属性，减少“应用损坏”类提示。
 - 兼容第三方网关：保留 Claude Code 默认模型 `opus[1m]`，并在前端模型识别层兼容第三方网关返回的模型列表。
 - 固定 Cowork 和 Code 模型菜单：`Opus 4.71M` 是伪装入口，`Kimi-k2.6` 是真实入口。
-- Cowork 和 Code 均显示五档强度：`低 / 中 / 高 / 超高 / 最大`，默认强度为 `高`。
+- Cowork 和 Code 均显示五档强度：`低 / 中 / 高 / 超高 / 最大`，默认模型为 `Opus 4.71M`，默认强度为 `最大`。
 - Claude Code 新建会话默认权限模式为 `绕过权限`，并隔离官方旧缓存里的 `接受编辑`。
 - 生成安装诊断日志，升级后补丁点失效会中止安装，避免替换成半残 Claude.app。
 
@@ -72,7 +72,7 @@ Logs/patch-report-YYYYMMDD-HHMMSS.json
 
 - `Opus 4.71M` 是伪装入口，实际 model id 固定为 `opus[1m]`，用于保留 Claude Code 依赖 Opus 名称开启的能力。
 - `Kimi-k2.6` 是真实入口，优先使用网关返回的真实 Kimi id，找不到时兜底为 `kimi-for-coding`。
-- Cowork 和 Code 都必须固定显示两个模型入口，并显示五档强度：`低 / 中 / 高 / 超高 / 最大`，默认强度是 `高`。
+- Cowork 和 Code 都必须固定显示两个模型入口，并显示五档强度：`低 / 中 / 高 / 超高 / 最大`，默认是 `Opus 4.71M · 最大`。
 - Code 新建会话默认权限模式是 `绕过权限`。如果其他电脑又显示 `接受编辑`，先看 `Logs/latest.json` 里的 `code.permission_default_bypass`。
 - 复制到其他电脑时，推荐复制本项目并在目标电脑重新运行 `install.command`，不要直接复制已经补丁过的 `/Applications/Claude.app`。
 - Claude Desktop 每次更新后都要重新运行补丁；如果新版 bundle 结构变化，安装会因 invariant 失败而中止，不会覆盖成半残 app。
@@ -207,9 +207,9 @@ Code 页面模型菜单固定为两项：`Opus 4.71M` 和 `Kimi-k2.6`。`Opus 4.
 
 底部模型按钮和强度标签也会一起兼容固定 Opus，避免只显示模型或只显示强度。Code 页面会保留完整强度菜单：`低 / 中 / 高 / 超高 / 最大`。
 
-Cowork 页面同样固定显示两项模型和五档强度。强度默认值是 `高`；如果之前已经选择过 Cowork 强度，会优先使用本机保存的 `cowork_effort_level`。切换 `Kimi-k2.6` 或切回 `Opus 4.71M` 不会清空强度菜单。
+Cowork 页面同样固定显示两项模型和五档强度。默认值固定为 `Opus 4.71M · 最大`；旧缓存里的 `kimi-for-coding`、`Kimi-k2.6` 或 `cowork_effort_level=high` 不再决定初始默认。手动切换 `Kimi-k2.6` 后当前界面仍会生效，切回 `Opus 4.71M` 不会清空强度菜单。
 
-Claude Desktop 更新后需要重新运行补丁。每次适配新版都会重点回归 Cowork 和 Code 两个模型菜单：不能出现 `Legacy Model`，不能只剩 `· 高` 这类空模型按钮，`Kimi-k2.6` 必须可选，五档强度必须都能点击。
+Claude Desktop 更新后需要重新运行补丁。每次适配新版都会重点回归 Cowork 和 Code 两个模型菜单：不能出现 `Legacy Model`，不能只剩 `· 高` / `· 最大` 这类空模型按钮，默认必须是 `Opus 4.71M · 最大`，`Kimi-k2.6` 必须可选，五档强度必须都能点击。
 
 Claude Code 新建会话的权限模式默认是 `绕过权限`。脚本会把新版前端里的 `cc-landing-draft-permission-mode` 和 `epitaxy-folder-permission-mode` 改为补丁专用键，避免其他电脑或旧缓存继续沿用官方默认 `接受编辑`。诊断日志里会检查 `code.permission_default_bypass`，这项失败时说明权限默认值补丁没有命中。
 
