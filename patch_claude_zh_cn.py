@@ -2029,6 +2029,38 @@ def prune_old_backups(original: Path, keep: Path, user_home: Path, dry_run: bool
             os.chown(path, int(sudo_uid), int(sudo_gid))
 
 
+def prepare_official_update(app: Path, user_home: Path, dry_run: bool) -> Path:
+    """解除当前补丁版 Claude.app 的覆盖阻碍，允许 Finder 直接拖官方 DMG 覆盖安装。"""
+    sudo_uid = os.environ.get("SUDO_UID")
+    sudo_gid = os.environ.get("SUDO_GID")
+
+    if dry_run:
+        print(f"[dry-run] Would prepare {app} for Finder overwrite without moving or deleting it")
+        print("[dry-run] Would clear uchg/schg flags, Gatekeeper attributes, owner and user-writable permissions")
+        print(f"[dry-run] Would not touch user config under {user_home}/Library/Application Support/Claude*")
+        return app
+
+    print(f"Preparing current Claude.app for official DMG overwrite: {app}")
+    run(["chflags", "-R", "nouchg,noschg", str(app)], check=False)
+    clear_quarantine(app)
+
+    if sudo_uid and sudo_gid:
+        uid = int(sudo_uid)
+        gid = int(sudo_gid)
+        for root, dirs, files in os.walk(app):
+            for name in [root, *[str(Path(root) / item) for item in dirs], *[str(Path(root) / item) for item in files]]:
+                try:
+                    os.chown(name, uid, gid)
+                except PermissionError:
+                    pass
+
+    run(["chmod", "-R", "u+rwX", str(app)], check=False)
+    print("Claude.app remains in /Applications. It is now prepared for Finder overwrite.")
+    print("Now drag the official Claude.app from the DMG into Applications and choose Replace.")
+    print("Your API, gateway and model settings under Application Support were not changed.")
+    return app
+
+
 def verify(app: Path) -> None:
     frontend = app / FRONTEND_I18N_REL / "zh-CN.json"
     data = load_json(frontend)
@@ -2061,6 +2093,7 @@ def main() -> int:
     parser.add_argument("--user-home", type=Path, default=Path.home(), help="Home directory whose Claude config should be updated")
     parser.add_argument("--dry-run", action="store_true", help="Prepare and verify a patched temp app, but do not replace /Applications/Claude.app")
     parser.add_argument("--diagnose", action="store_true", help="Only inspect the current Claude.app patch status and write a diagnostic report")
+    parser.add_argument("--prepare-official-update", action="store_true", help="Prepare the patched Claude.app so Finder can overwrite it from the official DMG")
     parser.add_argument("--launch", action="store_true", help="Launch Claude after installation")
     args = parser.parse_args()
 
@@ -2073,6 +2106,23 @@ def main() -> int:
         write_patch_report(report)
         print_report_summary(report)
         return 1 if report.has_required_failures() else 0
+
+    if args.prepare_official_update:
+        report = PatchReport(str(args.app), get_claude_version(args.app), "prepare-official-update")
+        if args.dry_run:
+            print("[dry-run] Claude will not be quit.")
+        else:
+            quit_claude()
+        target = prepare_official_update(args.app, args.user_home, args.dry_run)
+        report.add(
+            "official_update.prepare_overwrite",
+            "passed",
+            f"prepared_app={target}; moved=false; user_config_untouched=true",
+            required=True,
+        )
+        write_patch_report(report)
+        print_report_summary(report)
+        return 0
 
     require_file(FRONTEND_TRANSLATION)
     require_file(DESKTOP_TRANSLATION)

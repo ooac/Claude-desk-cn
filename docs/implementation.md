@@ -17,6 +17,7 @@
 | 文件 | 作用 |
 | --- | --- |
 | `install.command` | Finder 双击入口，负责以 sudo 调用 Python 补丁脚本。 |
+| `prepare_official_update.command` | 安装官方原版前的准备入口，解除当前补丁版 app 的覆盖阻碍。 |
 | `patch_claude_zh_cn.py` | 主补丁脚本，负责复制、修改、签名、备份、替换和验证。 |
 | `resources/frontend-zh-CN.json` | Claude 前端 i18n 文案翻译。 |
 | `resources/desktop-zh-CN.json` | Electron 桌面壳层中文资源。 |
@@ -238,6 +239,8 @@ Claude Desktop 更新后，前端 bundle 文件名和压缩变量名经常变化
 7. `超高` 和 `最大` 必须可点击，选择后底部标签要同步更新。
 8. 新版本如果把共享模型选择器从旧 `Wft/Vft/ogt` 改到新函数，必须补丁新的共享选择器，而不是只修旧 anchor。
 9. Code 新建会话权限模式必须默认 `绕过权限`，不能因为新版存储 helper 或旧电脑缓存回到 `接受编辑`。
+
+如果用户要安装官方原版，不能直接从 DMG 覆盖当前汉化版。补丁版 app 经过本地重签名、xattr 清理和整包替换，另一台电脑上还可能叠加运行中占用、锁定标记或内部权限差异。Finder 覆盖 app bundle 时会逐项复制，遇到内部条目不可写就会报“必须跳过某些项目”。维护策略是先运行 `prepare_official_update.command` 或 `--prepare-official-update`，只解除当前 `/Applications/Claude.app` 的锁定、扩展属性、owner 和用户写权限，然后让用户从官方 DMG 正常拖入覆盖。该流程不删除、不移动 app，也不触碰 `~/Library/Application Support/Claude*` 下的 API、网关和模型配置。
 
 当前 `1.6608.0` / `1.6608.2` 适配点：
 

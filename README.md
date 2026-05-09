@@ -85,15 +85,38 @@ Logs/patch-report-YYYYMMDD-HHMMSS.json
 复制整个项目文件夹即可。至少需要保留：
 
 - `install.command`
+- `prepare_official_update.command`
 - `patch_claude_zh_cn.py`
 - `resources/`
 - `README.md`
 
 目标电脑需要先安装官方 Claude Desktop 到 `/Applications/Claude.app`。复制后双击 `install.command` 即可安装。
 
+## 更新官方原版 Claude
+
+不要直接从官方 DMG 把 `Claude.app` 拖到 Applications 覆盖当前汉化版。macOS Finder 在覆盖已补丁和重签名过的 app bundle 时，可能因为运行中占用、锁定标记、扩展属性或内部文件权限直接报“必须跳过某些项目”。
+
+正确流程：
+
+1. 退出 Claude。
+2. 双击本项目里的 `prepare_official_update.command`。
+3. 脚本会解除当前 `/Applications/Claude.app` 的锁定、权限和扩展属性，但不会删除或移动它。
+4. 打开官方 DMG，把新的 `Claude.app` 拖到 Applications，并选择替换。
+5. 如果还需要汉化，再双击 `install.command`。
+
+API、网关、大模型等配置保存在用户目录的 `~/Library/Application Support/Claude*` 下，不在 `/Applications/Claude.app` 里。这个准备脚本不会修改这些配置。
+
+也可以在终端执行：
+
+```bash
+cd /path/to/Claude-desk-cn
+sudo /usr/bin/python3 patch_claude_zh_cn.py --user-home "$HOME" --prepare-official-update
+```
+
 ## 文件说明
 
 - `install.command`：Mac 双击安装入口。
+- `prepare_official_update.command`：安装官方原版前的准备入口，会解除当前汉化版的覆盖阻碍，但不删除、不移动 app。
 - `patch_claude_zh_cn.py`：执行补丁、备份、重签名和验证的主脚本。
 - `docs/implementation.md`：当前功能、实现原理和维护逻辑说明。
 - `Logs/`：安装和诊断日志目录，运行脚本后自动生成，不提交到 Git。
