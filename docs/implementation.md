@@ -217,13 +217,13 @@ Code 页面强度菜单不再只依赖官方 `Od(W)` 能力判断。当前模型
 
 早期补丁曾把普通默认对话模型写成 `kimi-for-coding`。这个值在默认对话模型列表中通常不存在，会导致前端拿不到当前模型的显示名，只剩下强度标签。当前实现会在默认对话路径把旧的 `kimi-for-coding` 归一为 `opus[1m]`。Code 页面模型菜单则单独处理：`Kimi-k2.6` 只是显示名，实际选择时传入网关可识别的 Kimi id，兜底为 `kimi-for-coding`。
 
-### 7. 可选的第三方模型校验补丁
+### 7. 第三方模型校验补丁
 
 脚本包含 `patch_custom3p_model_validation()`，尝试修改 `app.asar` 中的第三方模型名校验逻辑。
 
-这个补丁点依赖 Claude 内部压缩代码格式。如果当前版本找不到预期 anchor，脚本会输出警告并继续执行，不会中断整个中文补丁安装。
+这个补丁点依赖 Claude 内部压缩代码格式。旧版使用 `Hte`，中间版本曾短暂使用 `_Zt()`，`1.6608.2` 使用 `FLA` 总开关。脚本会按这些结构依次尝试，且必须在安装前 invariant 中通过。
 
-这是有意设计的降级策略：中文化和签名流程优先保证可执行；模型校验补丁属于兼容增强，失败时不应该让整个安装失败。
+如果当前版本找不到预期 anchor，安装会中止并保留原 `/Applications/Claude.app`，不会继续替换成半残应用。诊断日志中对应项是 `asar.custom3p_validation`。
 
 ### 8. Claude 更新后的模型菜单回归项
 
@@ -239,9 +239,10 @@ Claude Desktop 更新后，前端 bundle 文件名和压缩变量名经常变化
 8. 新版本如果把共享模型选择器从旧 `Wft/Vft/ogt` 改到新函数，必须补丁新的共享选择器，而不是只修旧 anchor。
 9. Code 新建会话权限模式必须默认 `绕过权限`，不能因为新版存储 helper 或旧电脑缓存回到 `接受编辑`。
 
-当前 `1.6608.0` 适配点：
+当前 `1.6608.0` / `1.6608.2` 适配点：
 
 - Cowork/普通入口：共享模型选择器 `Jbt`，固定重建两项模型，并移除 `Legacy Model` fallback 对当前菜单的影响。
+- `1.6608.2` 中 `Jbt` 从旧的外层 `conversationUuid` 组件拆成 `Jbt=({models:e,currentModelOption...})` 共享列表组件，外层配置仍负责 `Q/X/J`、当前模型和强度 section。脚本必须同时识别两种结构。
 - Cowork 强度：`Jbt` 只在 Code 传入 `ccdEffortSection` 时有原生强度 section；Cowork 不传该 section，因此补丁会在 `Jbt` 内增加 fallback section。只要原生 section 缺失，就无条件使用 fallback，不再依赖 `activeMode` 字符串判断。默认值为 `high`，显示为“高”，选中后写入 `localStorage["cowork_effort_level"]` 并派发 `cowork-effort-change`。
 - Cowork 配置同步：Cowork 配置处监听 `cowork-effort-change`，让 `NT.setYukonSilverConfig({ effort })` 能使用最新强度。这样点击 `超高` 或 `最大` 后，不只更新菜单，也会进入后续会话配置。
 - Cowork 健康横幅：新版 `EQt/yW.Unreachable` 结构下，对 `api.kimi.com` 旧健康状态做隐藏处理。

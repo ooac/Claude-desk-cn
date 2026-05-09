@@ -175,7 +175,10 @@ def find_frontend_bundles(app: Path) -> dict[str, Path | None]:
         return result
     for path in sorted(assets_dir.glob("*.js")):
         text = path.read_text(encoding="utf-8", errors="ignore")
-        if result["index"] is None and "const Jbt=({conversationUuid" in text:
+        if result["index"] is None and (
+            "const Jbt=({conversationUuid" in text
+            or "Jbt=({models:e,currentModelOption" in text
+        ):
             result["index"] = path
         if result["code"] is None and 'const um="ccd-effort-level"' in text and "modelExtraSections:xs" in text:
             result["code"] = path
@@ -204,6 +207,7 @@ def check_custom3p_validation_patched(app: Path) -> bool:
         return False
     return (
         b"const Hte=false" in content
+        or b"const FLA=false" in content
         or b"function _Zt(e,A){return null;" in content
     )
 
@@ -863,6 +867,116 @@ def patch_cowork_model_menu(assets_dir: Path) -> tuple[int, int]:
         ),
     }
 
+    # Claude 1.6608.2：Jbt 变成独立共享模型列表组件，外层配置仍在同一 bundle。
+    # 这里按新版变量名补丁，确保升级后 Cowork 不会退回 Legacy Model 或丢失强度。
+    jbt_v2_model_re = re.compile(
+        r'z=(?:r\?\?A|\(e=>e==="kimi-for-coding"\?"opus\[1m\]":e\)\(r\?\?A\)),'
+        r'\{allModelOptions:F,mainModels:U,overflowModels:q\}=R,'
+        r'B=ud\("sticky_model_selector"\),\[\$,V\]=n\.useState\(null\),H=!B&&\$\?\$:z;'
+        r'let W=F\.find\(e=>e\.model===H\);W\|\|\(W=F\.find\(e=>e\.model===L\)\?\?Zbt\);'
+        r'const G=n\.useRef\(null\),K=S7\("paprika_mode"\);zbt\(z\);'
+        r'const Y=Rbt\(\),Z=!h&&!O,Q=Z\?\[W\]:U,X=Z\?U\.filter\(e=>e\.model!==H\):\[\],'
+        r'J=Z\?q\.filter\(e=>e\.model!==H\):q,',
+        re.DOTALL,
+    )
+    jbt_v2_model_target = (
+        'z=(e=>{const t=String(e??"").toLowerCase();'
+        'if("kimi-for-coding"===t||"kimi-k2.6"===t||/kimi/i.test(String(e))&&/k2\\.6/i.test(String(e)))return"kimi-for-coding";'
+        'if("opus"===t||"opus[1m]"===t)return"opus[1m]";return"opus[1m]"})(r??A),'
+        '{allModelOptions:F}=R,U=[],q=[],B=ud("sticky_model_selector"),[$,V]=n.useState(null),H=$??z,'
+        'rr={...(F.find(e=>"opus[1m]"===e.model)??F.find(e=>/opus/i.test(e.model)&&/\\[1m\\]/i.test(e.model))??F.find(e=>e.thinking_modes?.length)??{}),model:"opus[1m]",name:"Opus 4.71M",name_i18n_key:void 0,inactive:!1,overflow:!1},'
+        'oo=F.find(e=>{const t=String(e.model??"").toLowerCase(),s=String(e.name??"").toLowerCase();'
+        'return"kimi-for-coding"===t||"kimi-for-coding"===s||"kimi-k2.6"===t||"kimi-k2.6"===s||/kimi.*k2\\.6/i.test(t)||/kimi.*k2\\.6/i.test(s)}),'
+        'll=oo?.model??"kimi-for-coding",'
+        'cc={...(oo??F.find(e=>e.thinking_modes?.length)??{}),model:ll,name:"Kimi-k2.6",name_i18n_key:void 0,inactive:!1,overflow:!1};'
+        'let W="kimi-for-coding"===String(H).toLowerCase()||/kimi/i.test(String(H))&&/k2\\.6/i.test(String(H))?cc:rr;'
+        'const G=n.useRef(null),K=S7("paprika_mode");zbt(W.model);'
+        'const Y=Rbt(),Z=!h&&!O,Q=[rr,cc],X=[],J=[],'
+    )
+    jbt_v2_effort_re = re.compile(
+        r'\{activeMode:ee\}=qbt\(z,K\),te=O\?void 0:ee\?\.label,'
+        r'\{toggleConversationSetting:se\}=E7\(\{source:"modelSelector"\}\)',
+        re.DOTALL,
+    )
+    jbt_v2_effort_target = (
+        '{activeMode:ee}=qbt(z,K),'
+        '[cw,Sw]=n.useState(()=>{try{return localStorage.getItem("cowork_effort_level")||"high"}catch{return"high"}}),'
+        'Fw=n.useMemo(()=>_??{current:cw,options:[{value:"low",label:"低"},{value:"medium",label:"中"},{value:"high",label:"高"},{value:"xhigh",label:"超高"},{value:"max",label:"最大"}],'
+        'onSelect:e=>{Sw(e);try{localStorage.setItem("cowork_effort_level",e),window.dispatchEvent(new CustomEvent("cowork-effort-change",{detail:e}))}catch{}}},[_,cw]),'
+        'te=Fw?{low:"低",medium:"中",high:"高",xhigh:"超高",max:"最大"}[Fw.current]??ee?.label:O?void 0:ee?.label,'
+        '{toggleConversationSetting:se}=E7({source:"modelSelector"})'
+    )
+    jbt_v2_handler_re = re.compile(
+        r'const de=e=>\{if\(e\.model===H\)return;if\(ne\(e\.model\)\)return;'
+        r'if\(ae\|\|!Qbt\(e\.model,!1,!re,L,le\)\)\{',
+        re.DOTALL,
+    )
+    jbt_v2_handler_target = (
+        'const de=e=>{const t=String(e.model??"").toLowerCase(),s="opus"===t||"opus[1m]"===t||'
+        '"kimi-for-coding"===t||/kimi/i.test(String(e.model))&&/k2\\.6/i.test(String(e.model));'
+        'if(e.model===H)return;if(!s&&ne(e.model))return;if(s||ae||!Qbt(e.model,!1,!re,L,le)){'
+    )
+    jbt_v2_render_re = re.compile(
+        r'_&&a\.jsxs\(a\.Fragment,\{children:\[a\.jsx\(tl,\{className:Mde\}\),'
+        r'a\.jsx\("div",\{className:"text-xs text-text-500 pt-2 pb-1 px-2",children:a\.jsx\(c,\{defaultMessage:"(?:Effort|强度)",id:"VKZ/U8vAsk"\}\)\}\),'
+        r'a\.jsx\(eyt,\{section:_,compactMenu:j\}\)\]\}\)',
+        re.DOTALL,
+    )
+    jbt_v2_render_target = (
+        'Fw&&a.jsxs(a.Fragment,{children:[a.jsx(tl,{className:Mde}),'
+        'a.jsx("div",{className:"text-xs text-text-500 pt-2 pb-1 px-2",children:a.jsx(c,{defaultMessage:"强度",id:"VKZ/U8vAsk"})}),'
+        'a.jsx(eyt,{section:Fw,compactMenu:j})]})'
+    )
+    jbt_v2_state_source = 'Y(e.model)||se("compass_mode",null),B||V(e.model),D(e.model),i?.(e)}'
+    jbt_v2_state_target = 'Y(e.model)||se("compass_mode",null),V(e.model),D(e.model),i?.(e)}'
+    cowork_effort_config_re = re.compile(
+        r'_=yc\("cowork_effort_level","medium",([A-Za-z0-9_$]+)\),'
+        r'j=yc\("cowork_model",([^)]*)\),',
+        re.DOTALL,
+    )
+
+    def cowork_effort_config_target(match: re.Match[str]) -> str:
+        validator = match.group(1)
+        cowork_model_args = match.group(2)
+        return (
+            f'_=(()=>{{const e=yc("cowork_effort_level","high",{validator}),'
+            '[t,s]=n.useState(()=>{try{return localStorage.getItem("cowork_effort_level")||e}catch{return e}});'
+            'return n.useEffect(()=>{const e=()=>{try{s(localStorage.getItem("cowork_effort_level")||"high")}catch{s("high")}};'
+            'if("undefined"==typeof window)return;e();return window.addEventListener("cowork-effort-change",e),'
+            '()=>window.removeEventListener("cowork-effort-change",e)},[]),t})(),'
+            f'j=yc("cowork_model",{cowork_model_args}),'
+        )
+
+    for path in sorted(assets_dir.glob("*.js")):
+        text = path.read_text(encoding="utf-8")
+        if "Jbt=({models:e,currentModelOption" not in text:
+            continue
+        patched = text
+        count = 0
+        patched, n = jbt_v2_model_re.subn(jbt_v2_model_target, patched, count=1)
+        count += n
+        patched, n = jbt_v2_effort_re.subn(jbt_v2_effort_target, patched, count=1)
+        count += n
+        patched, n = jbt_v2_handler_re.subn(jbt_v2_handler_target, patched, count=1)
+        count += n
+        patched, n = jbt_v2_render_re.subn(jbt_v2_render_target, patched, count=1)
+        count += n
+        occurrences = patched.count(jbt_v2_state_source)
+        if occurrences:
+            patched = patched.replace(jbt_v2_state_source, jbt_v2_state_target)
+            count += occurrences
+        for source, target in pte_replacements.items():
+            occurrences = patched.count(source)
+            if occurrences:
+                patched = patched.replace(source, target)
+                count += occurrences
+        patched, n = cowork_effort_config_re.subn(cowork_effort_config_target, patched, count=1)
+        count += n
+        if patched != text:
+            path.write_text(patched, encoding="utf-8")
+            patched_files += 1
+            patched_strings += count
+
     for path in sorted(assets_dir.glob("*.js")):
         text = path.read_text(encoding="utf-8")
         if "const Jbt=({conversationUuid" not in text:
@@ -887,6 +1001,8 @@ def patch_cowork_model_menu(assets_dir: Path) -> tuple[int, int]:
             if occurrences:
                 patched = patched.replace(source, target)
                 count += occurrences
+        patched, n = cowork_effort_config_re.subn(cowork_effort_config_target, patched, count=1)
+        count += n
         if patched != text:
             path.write_text(patched, encoding="utf-8")
             patched_files += 1
@@ -1416,23 +1532,34 @@ def patch_custom3p_model_validation(app: Path) -> bool:
     if count == 1:
         patched_content = content.replace(anchor, patched, 1)
     else:
-        # Claude 1.6608+ moved the model-name validation into _Zt().
-        # Make that validator a no-op while preserving app.asar file length.
-        new_anchor = b"function _Zt(e,A){if(!bbA||!(A!=null&&A.length))return null;"
-        new_expr = b"return null;"
-        new_patched = b"function _Zt(e,A){" + new_expr + b" " * (len(new_anchor) - len(b"function _Zt(e,A){") - len(new_expr))
-        if len(new_anchor) != len(new_patched):
-            raise SystemExit("Internal patch error: custom 3P validation replacement changed length.")
-        if content.count(new_patched) == 1:
+        # Claude 1.6608.2 moved the 3P model-name validation gate to FLA.
+        fla_anchor = b'const FLA=process.env.NODE_ENV!=="production"||!1,Yxe='
+        fla_replacement = b"const FLA=" + replacement + b"||!1,Yxe="
+        if len(fla_anchor) != len(fla_replacement):
+            raise SystemExit("Internal patch error: custom 3P FLA replacement changed length.")
+        if content.count(fla_replacement) == 1:
             print("Custom 3P model-name validation already patched in app.asar")
             return True
-        if content.count(new_anchor) != 1:
-            print(
-                "Warning: Could not patch custom 3P model validation. "
-                "Claude bundle format may have changed. Continue without this optional patch."
-            )
-            return False
-        patched_content = content.replace(new_anchor, new_patched, 1)
+        if content.count(fla_anchor) == 1:
+            patched_content = content.replace(fla_anchor, fla_replacement, 1)
+        else:
+            # Claude 1.6608+ temporarily moved the model-name validation into _Zt().
+            # Make that validator a no-op while preserving app.asar file length.
+            new_anchor = b"function _Zt(e,A){if(!bbA||!(A!=null&&A.length))return null;"
+            new_expr = b"return null;"
+            new_patched = b"function _Zt(e,A){" + new_expr + b" " * (len(new_anchor) - len(b"function _Zt(e,A){") - len(new_expr))
+            if len(new_anchor) != len(new_patched):
+                raise SystemExit("Internal patch error: custom 3P validation replacement changed length.")
+            if content.count(new_patched) == 1:
+                print("Custom 3P model-name validation already patched in app.asar")
+                return True
+            if content.count(new_anchor) != 1:
+                print(
+                    "Warning: Could not patch custom 3P model validation. "
+                    "Claude bundle format may have changed. Continue without this optional patch."
+                )
+                return False
+            patched_content = content.replace(new_anchor, new_patched, 1)
 
     if len(patched_content) != len(content):
         raise SystemExit("Internal patch error: app.asar length changed during custom 3P patch.")
