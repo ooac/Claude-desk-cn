@@ -66,7 +66,7 @@ Logs/latest.json
 Logs/patch-report-YYYYMMDD-HHMMSS.json
 ```
 
-`Logs/` 就在本项目目录里，和 `install.command` 同级。其他电脑出问题时，直接把这个文件夹发出来即可。日志只记录 Claude 版本、bundle 文件名、补丁点命中状态、JS 语法检查和签名状态，不记录 API Key、token 或对话内容。安装流程也会写同样的日志；如果 Cowork/Code 必要补丁点没命中，脚本会中止安装并保留原 Claude.app。
+`Logs/` 就在本项目目录里，和 `install.command` 同级。其他电脑出问题时，直接把这个文件夹发出来即可。日志只记录 Claude 版本、bundle 文件名、补丁点命中状态、已知缺失文案检查、JS 语法检查和签名状态，不记录 API Key、token 或对话内容。安装流程也会写同样的日志；如果 Cowork/Code 必要补丁点或已知未汉化文案检查没命中，脚本会中止安装并保留原 Claude.app。
 
 ## 已实现能力与注意事项速览
 
@@ -74,9 +74,10 @@ Logs/patch-report-YYYYMMDD-HHMMSS.json
 - `Kimi-k2.6` 是真实入口，优先使用网关返回的真实 Kimi id，找不到时兜底为 `kimi-for-coding`。
 - Cowork 和 Code 都必须固定显示两个模型入口，并显示五档强度：`低 / 中 / 高 / 超高 / 最大`，默认是 `Opus 4.71M · 最大`。
 - Code 新建会话默认权限模式是 `绕过权限`。如果其他电脑又显示 `接受编辑`，先看 `Logs/latest.json` 里的 `code.permission_default_bypass`。
+- 新版页面若又出现已记录过的英文残留，先看 `Logs/latest.json` 里的 `i18n.known_missing_strings`，它会列出缺失或仍等于英文原文的 i18n key。
 - 复制到其他电脑时，推荐复制本项目并在目标电脑重新运行 `install.command`，不要直接复制已经补丁过的 `/Applications/Claude.app`。
 - Claude Desktop 每次更新后都要重新运行补丁；如果新版 bundle 结构变化，安装会因 invariant 失败而中止，不会覆盖成半残 app。
-- 已适配 Claude Desktop `1.6608.2` 的新版共享模型选择器和第三方模型校验开关；后续版本如再次变动，优先看 `Logs/latest.json` 的失败项。
+- 已适配 Claude Desktop `1.6608.2` 与 `1.7196.0` 的共享模型选择器和第三方模型校验开关；后续版本如再次变动，优先看 `Logs/latest.json` 的失败项。
 - `api.kimi.com` 健康横幅补丁只隐藏旧健康检查误报，不保证第三方网关真实请求一定成功；真实请求仍由网关配置、网络和上游模型决定。
 - 出现异常时先运行 `--diagnose`，把项目根目录里的 `Logs/` 发回来，比截图更容易定位是哪一个补丁点失效。
 
@@ -212,6 +213,8 @@ Cowork 页面同样固定显示两项模型和五档强度。默认值固定为 
 Claude Desktop 更新后需要重新运行补丁。每次适配新版都会重点回归 Cowork 和 Code 两个模型菜单：不能出现 `Legacy Model`，不能只剩 `· 高` / `· 最大` 这类空模型按钮，默认必须是 `Opus 4.71M · 最大`，`Kimi-k2.6` 必须可选，五档强度必须都能点击。
 
 Claude Code 新建会话的权限模式默认是 `绕过权限`。脚本会把新版前端里的 `cc-landing-draft-permission-mode` 和 `epitaxy-folder-permission-mode` 改为补丁专用键，避免其他电脑或旧缓存继续沿用官方默认 `接受编辑`。诊断日志里会检查 `code.permission_default_bypass`，这项失败时说明权限默认值补丁没有命中。
+
+Claude Desktop `1.7196.0` 起，旧版补丁点 `Jbt` / `um="ccd-effort-level"` 已经变成 `k5/Fht/Pht` 和 `zm/Um/Hm`。如果更新后“汉化又失效”，先运行诊断；新版脚本会检查这些新锚点，避免继续误判为旧 bundle。
 
 普通默认对话里的旧 `kimi-for-coding` 默认值会归一为 `opus[1m]`，避免模型按钮变成空白。Code 页面里直接选择 `Kimi-k2.6` 时，会写入真实 Kimi id，不再把显示名 `Kimi-k2.6` 当作请求模型名。
 

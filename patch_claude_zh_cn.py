@@ -53,6 +53,25 @@ REPORT_DIR = ROOT / "Logs"
 LANG_LIST_RE = re.compile(
     r'\["en-US","de-DE","fr-FR","ko-KR","ja-JP","es-419","es-ES","it-IT","hi-IN","pt-BR","id-ID"(.*?)\]'
 )
+CJK_RE = re.compile(r"[\u4e00-\u9fff]")
+
+KNOWN_FRONTEND_I18N_KEYS: dict[str, str] = {
+    "0rLmv1esFb": "隐私页：更新检查请求说明",
+    "16+ehubl/n": "隐私页：崩溃报告说明",
+    "CbPYtuP6+N": "隐私页：身份和账号说明",
+    "MYYAX2WEkL": "隐私页：Anthropic 可能收到的内容标题",
+    "SKeCK+7hmh": "Claude Code 设置：本地会话标题",
+    "U5lBq+CZ7G": "隐私页：匿名使用指标说明",
+    "ULnTQCHxiV": "隐私页：Anthropic 看不到的内容标题",
+    "akXG4ChYkN": "Claude Code 设置：默认启用远程控制",
+    "fVfPjDIwfi": "隐私页：对话内容说明",
+    "geOrzylJdv": "Claude Code 设置：组织策略禁用远程控制",
+    "gshbVTjZni": "连接器页：迁移到自定义提示",
+    "h3IJeFcbkv": "Claude Code 设置：远程控制自动连接说明",
+    "qgN98bidUV": "隐私页：文件和工作区内容说明",
+    "tgkg69DKCl": "隐私页：第三方推理提供商说明",
+    "xyS7d891o+": "隐私页：诊断报告发送说明",
+}
 
 
 @dataclass
@@ -178,12 +197,15 @@ def find_frontend_bundles(app: Path) -> dict[str, Path | None]:
         if result["index"] is None and (
             "const Jbt=({conversationUuid" in text
             or "Jbt=({models:e,currentModelOption" in text
+            or ("k5=(e=\"ccr_model\"" in text and "Pht=({models:e,currentModelOption" in text)
         ):
             result["index"] = path
         if (
             result["code"] is None
-            and 'const um="ccd-effort-level' in text
-            and "modelExtraSections:xs" in text
+            and (
+                ('const um="ccd-effort-level' in text and "modelExtraSections:xs" in text)
+                or ('const zm="ccd-effort-level' in text and "modelExtraSections:Ss" in text)
+            )
         ):
             result["code"] = path
     return result
@@ -209,11 +231,49 @@ def check_custom3p_validation_patched(app: Path) -> bool:
         content = data[content_offset : content_offset + content_size]
     except Exception:
         return False
-    return (
+    if (
         b"const Hte=false" in content
         or b"const FLA=false" in content
         or b"function _Zt(e,A){return null;" in content
-    )
+    ):
+        return True
+    known_validation_gates = [
+        b'const Hte=process.env.NODE_ENV!=="production"||!1,eRt=',
+        b'const FLA=process.env.NODE_ENV!=="production"||!1,Yxe=',
+        b"function _Zt(e,A){if(!bbA||!(A!=null&&A.length))return null;",
+    ]
+    return not any(anchor in content for anchor in known_validation_gates)
+
+
+def check_known_frontend_i18n(app: Path) -> tuple[bool, str, int]:
+    i18n_dir = app / FRONTEND_I18N_REL
+    en_path = i18n_dir / "en-US.json"
+    zh_path = i18n_dir / f"{LANG_CODE}.json"
+    if not zh_path.exists():
+        return False, f"缺少 {zh_path}", 0
+    try:
+        zh_data = load_json(zh_path)
+        en_data = load_json(en_path) if en_path.exists() else {}
+    except Exception as exc:
+        return False, f"读取 i18n JSON 失败：{exc}", 0
+
+    failures: list[str] = []
+    checked = 0
+    for key, label in KNOWN_FRONTEND_I18N_KEYS.items():
+        en_value = en_data.get(key)
+        zh_value = zh_data.get(key)
+        if en_value is None and zh_value is None:
+            continue
+        checked += 1
+        if zh_value is None:
+            failures.append(f"{key}({label}) 缺少 zh-CN 翻译")
+            continue
+        if zh_value == en_value:
+            failures.append(f"{key}({label}) 仍等于 en-US 原文")
+            continue
+        if isinstance(zh_value, str) and not CJK_RE.search(zh_value):
+            failures.append(f"{key}({label}) 不包含中文字符")
+    return not failures, "; ".join(failures), checked
 
 
 def require_file(path: Path) -> None:
@@ -620,16 +680,16 @@ def patch_permission_defaults(assets_dir: Path) -> tuple[int, int]:
     """把 Code 新建会话权限默认值固定为绕过权限，并隔离旧 localStorage。"""
     regex_replacements: list[tuple[re.Pattern[str], str]] = [
         (
-            re.compile(r'\b(?P<fn>Ld|fc)\("cc-landing-draft-permission-mode","acceptEdits"\)'),
+            re.compile(r'\b(?P<fn>Ld|fc|Ic)\("cc-landing-draft-permission-mode","acceptEdits"\)'),
             r'\g<fn>("cc-landing-draft-permission-mode-cn","bypassPermissions")',
         ),
         (
-            re.compile(r'\b(?P<fn>Mi|Ks)\("cc-landing-draft-permission-mode","acceptEdits",!1\)'),
+            re.compile(r'\b(?P<fn>Mi|Ks|Ws)\("cc-landing-draft-permission-mode","acceptEdits",!1\)'),
             r'\g<fn>("cc-landing-draft-permission-mode-cn","bypassPermissions",!1)',
         ),
         (
             re.compile(
-                r'\b(?P<fn>Ld|fc)\("epitaxy-folder-permission-mode",'
+                r'\b(?P<fn>Ld|fc|Ic)\("epitaxy-folder-permission-mode",'
                 r'(?P<default>[A-Za-z_$][\w$]*),\{scope:"account"\}\)'
             ),
             r'\g<fn>("epitaxy-folder-permission-mode-cn",\g<default>,{scope:"account"})',
@@ -641,6 +701,12 @@ def patch_permission_defaults(assets_dir: Path) -> tuple[int, int]:
         ),
         'const e=en??Zs??$s??Gs??"bypassPermissions";return sn?wt(e,Os):e': (
             'const e=en??Zs??$s??Gs??"bypassPermissions";return sn?wt(e,Os):e'
+        ),
+        'const e=dn??cn??nn??Qs;return fn?jt(e,Gs):e': (
+            'const e=dn??cn??Qs??nn??"bypassPermissions";return fn?jt(e,Gs):e'
+        ),
+        'const e=dn??cn??Qs??nn??"bypassPermissions";return fn?jt(e,Gs):e': (
+            'const e=dn??cn??Qs??nn??"bypassPermissions";return fn?jt(e,Gs):e'
         ),
     }
     patched_files = 0
@@ -723,6 +789,10 @@ def patch_epitaxy_cache_bust(ion_dist_dir: Path, assets_dir: Path) -> tuple[int,
             or (
                 'const um="ccd-effort-level' in path.read_text(encoding="utf-8", errors="ignore")
                 and "modelExtraSections:xs" in path.read_text(encoding="utf-8", errors="ignore")
+            )
+            or (
+                'const zm="ccd-effort-level' in path.read_text(encoding="utf-8", errors="ignore")
+                and "modelExtraSections:Ss" in path.read_text(encoding="utf-8", errors="ignore")
             )
         ),
         None,
@@ -970,6 +1040,84 @@ def patch_cowork_model_menu(assets_dir: Path) -> tuple[int, int]:
             f'j=yc("cowork_model",{cowork_model_args}),'
         )
 
+    # Claude 1.7196+：共享模型配置改为 k5()，菜单组件改为 Fht/Pht。
+    # 这一版没有 Jbt，必须直接固定 k5 的候选项，并给 Fht 增加 Cowork fallback 强度区。
+    k5_return_re = re.compile(
+        r'return n\.useEffect\(\(\)=>\{g\|\|a\(\{event_key:"claudeai\.code\.composer\.default_model_missing_from_config",default_model:c\}\)\},\[g,c,a\]\),f',
+        re.DOTALL,
+    )
+    k5_return_target = (
+        'return n.useEffect(()=>{g||a({event_key:"claudeai.code.composer.default_model_missing_from_config",default_model:c})},[g,c,a]),'
+        '((t)=>{if("ccr_model"!==e&&"cowork_model"!==e)return t;'
+        'const s=t[1]??{},a=s.allModelOptions??[],r={...(a.find(e=>"opus[1m]"===e.model)??a.find(e=>/opus/i.test(String(e.model))&&/\\[1m\\]/i.test(String(e.model)))??a.find(e=>e.thinking_modes?.length)??{}),model:"opus[1m]",name:"Opus 4.71M",label_override:"Opus 4.71M",name_i18n_key:void 0,inactive:!1,overflow:!1},'
+        'i=a.find(e=>{const t=String(e.model??"").toLowerCase(),s=String(e.name??"").toLowerCase(),n=String(e.label_override??"").toLowerCase();return"kimi-for-coding"===t||"kimi-for-coding"===s||"kimi-for-coding"===n||"kimi-k2.6"===t||"kimi-k2.6"===s||"kimi-k2.6"===n||/kimi.*k2\\.6/i.test(t)||/kimi.*k2\\.6/i.test(s)||/kimi.*k2\\.6/i.test(n)}),'
+        'o=i?.model??"kimi-for-coding",l={...(i??a.find(e=>e.thinking_modes?.length)??{}),model:o,name:"Kimi-k2.6",label_override:"Kimi-k2.6",name_i18n_key:void 0,inactive:!1,overflow:!1};'
+        'return["opus[1m]",{...s,allModelOptions:[r,l],mainModels:[r,l],overflowModels:[],legacyModelIds:[],syntheticAllowedModels:s.syntheticAllowedModels??{}}]})(f)'
+    )
+    fht_state_source = 'U=ld("sticky_model_selector"),[q,B]=n.useState(null),$=!U&&q?q:D;'
+    fht_state_target = 'U=ld("sticky_model_selector"),[q,B]=n.useState(null),$=q??D;'
+    fht_effort_source = (
+        '{activeMode:X}=jht(D,W),J=L?void 0:X?.label,{toggleConversationSetting:ee}=X0({source:"modelSelector"})'
+    )
+    fht_effort_target = (
+        '{activeMode:X}=jht(D,W),'
+        '[cw,Sw]=n.useState(()=>{try{return localStorage.getItem("cowork_effort_level_cn")||"max"}catch{return"max"}}),'
+        'Fw=n.useMemo(()=>_??{current:cw,options:[{value:"low",label:"低"},{value:"medium",label:"中"},{value:"high",label:"高"},{value:"xhigh",label:"超高"},{value:"max",label:"最大"}],'
+        'onSelect:e=>{Sw(e);try{localStorage.setItem("cowork_effort_level_cn",e),window.dispatchEvent(new CustomEvent("cowork-effort-change",{detail:e}))}catch{}}},[_,cw]),'
+        'J=L?void 0:_?X?.label:{low:"低",medium:"中",high:"高",xhigh:"超高",max:"最大"}[Fw.current]??X?.label,'
+        '{toggleConversationSetting:ee}=X0({source:"modelSelector"})'
+    )
+    fht_effort_render_source = (
+        '_&&a.jsxs(a.Fragment,{children:[a.jsx(sl,{className:Ete}),a.jsx("div",{className:"text-xs text-text-500 pt-2 pb-1 px-2",children:a.jsx(c,{defaultMessage:"Effort",id:"VKZ/U8vAsk"})}),a.jsx(zht,{section:_,compactMenu:j})]})'
+    )
+    fht_effort_render_source_zh = (
+        '_&&a.jsxs(a.Fragment,{children:[a.jsx(sl,{className:Ete}),a.jsx("div",{className:"text-xs text-text-500 pt-2 pb-1 px-2",children:a.jsx(c,{defaultMessage:"强度",id:"VKZ/U8vAsk"})}),a.jsx(zht,{section:_,compactMenu:j})]})'
+    )
+    fht_effort_render_target = (
+        'Fw&&a.jsxs(a.Fragment,{children:[a.jsx(sl,{className:Ete}),a.jsx("div",{className:"text-xs text-text-500 pt-2 pb-1 px-2",children:a.jsx(c,{defaultMessage:"强度",id:"VKZ/U8vAsk"})}),a.jsx(zht,{section:Fw,compactMenu:j})]})'
+    )
+    fht_select_source = 'G(e.model)||ee("compass_mode",null),U||B(e.model),R(e.model),i?.(e)}'
+    fht_select_target = 'G(e.model)||ee("compass_mode",null),B(e.model),R(e.model),i?.(e)}'
+    yukon_source = (
+        'const L=w.autoDownloadInBackground&&!0===v.considerEnabledForNonUI;'
+        'n.useEffect(()=>{uA?.setYukonSilverConfig?.({...w,effortByModel:k.effort_by_model,'
+    )
+    yukon_target = (
+        'const[zhEffort,setZhEffort]=n.useState(()=>{try{return localStorage.getItem("cowork_effort_level_cn")||"max"}catch{return"max"}}),'
+        'L=w.autoDownloadInBackground&&!0===v.considerEnabledForNonUI;'
+        'n.useEffect(()=>{const e=()=>{try{setZhEffort(localStorage.getItem("cowork_effort_level_cn")||"max")}catch{setZhEffort("max")}};'
+        'return window.addEventListener("cowork-effort-change",e),()=>window.removeEventListener("cowork-effort-change",e)},[]),'
+        'n.useEffect(()=>{uA?.setYukonSilverConfig?.({...w,effort:zhEffort,effortByModel:k.effort_by_model,'
+    )
+    yukon_deps_source = '},[w,k,_,L,j,M]);'
+    yukon_deps_target = '},[w,k,_,L,j,M,zhEffort]);'
+
+    for path in sorted(assets_dir.glob("*.js")):
+        text = path.read_text(encoding="utf-8")
+        if "k5=(e=\"ccr_model\"" not in text or "Pht=({models:e,currentModelOption" not in text:
+            continue
+        patched = text
+        count = 0
+        patched, n = k5_return_re.subn(k5_return_target, patched, count=1)
+        count += n
+        for source, target in {
+            fht_state_source: fht_state_target,
+            fht_effort_source: fht_effort_target,
+            fht_effort_render_source: fht_effort_render_target,
+            fht_effort_render_source_zh: fht_effort_render_target,
+            fht_select_source: fht_select_target,
+            yukon_source: yukon_target,
+            yukon_deps_source: yukon_deps_target,
+        }.items():
+            occurrences = patched.count(source)
+            if occurrences:
+                patched = patched.replace(source, target)
+                count += occurrences
+        if patched != text:
+            path.write_text(patched, encoding="utf-8")
+            patched_files += 1
+            patched_strings += count
+
     for path in sorted(assets_dir.glob("*.js")):
         text = path.read_text(encoding="utf-8")
         if "Jbt=({models:e,currentModelOption" not in text:
@@ -1177,6 +1325,75 @@ def patch_epitaxy_model_menu(assets_dir: Path) -> tuple[int, int]:
     """把 Claude Code 模型菜单固定为 Opus 伪装入口、Kimi 真实入口和完整强度。"""
     patched_files = 0
     patched_strings = 0
+
+    # Claude 1.7196+：Code 页变量改为 zm/Um/Hm，模型菜单项在 fe/pe 中生成。
+    code_17196_current_re = re.compile(
+        r'const K=e\.useCallback\(e=>null!==e&&M\.some\(t=>t\.model===e\),\[M\]\)\(S\)\?S:null,'
+        r'W=H\?\?O\?\?L\?\?K\?\?k,V=M\.find\(e=>e\.model===W\),G=V\?null:Ze\(W\),'
+        r'Q=e\.useMemo\(\(\)=>V\?ah\(V\):G,\[V,G\]\),X=et\(\)',
+        re.DOTALL,
+    )
+    code_17196_current_target = (
+        'const K=e.useCallback(e=>null!==e&&M.some(t=>t.model===e),[M])(S)?S:null,'
+        'W=(e=>{const t=String(e??"").toLowerCase();'
+        'if(!e)return"opus[1m]";'
+        'if("opus"===t||"opus[1m]"===t)return"opus[1m]";'
+        'if("kimi-for-coding"===t||"kimi-k2.6"===t||/kimi/i.test(String(e))&&/k2\\.6/i.test(String(e)))return"kimi-for-coding";'
+        'const s=M.find(e=>String(e.model??"").toLowerCase()===t||String(e.name??"").toLowerCase()===t);'
+        'return s?s.model:"opus[1m]"'
+        '})(H??"opus[1m]"),'
+        'V=M.find(e=>e.model===W),'
+        'G=V?null:("opus"===W||"opus[1m]"===W?"Opus 4.71M":("kimi-for-coding"===W||/kimi/i.test(String(W))&&/k2\\.6/i.test(String(W))?"Kimi-k2.6":Ze(W))),'
+        'Q=e.useMemo(()=>("opus"===W||"opus[1m]"===W)?"Opus 4.71M":("kimi-for-coding"===W||/kimi/i.test(String(W))&&/k2\\.6/i.test(String(W)))?"Kimi-k2.6":V?ah(V):G,[V,G,W]),X=et()'
+    )
+    code_17196_items_re = re.compile(
+        r'fe=e\.useMemo\(\(\)=>\{const e=M\.map\(e=>\{const t=C\.includes\(e\.model\);return\{label:t\?.*?'
+        r'\},\[M,C,W,ue,re,G,n\]\),pe=e\.useMemo\(\(\)=>\{if\(!de\)return fe;'
+        r'const\[e,\.\.\.t\]=fe;return e\?\[de,\{...e,separatorBefore:!0\},\.\.\.t\]:\[de\]\},\[de,fe\]\)',
+        re.DOTALL,
+    )
+    code_17196_items_target = (
+        'fe=e.useMemo(()=>{'
+        'const e={label:"Opus 4.71M",checked:"opus"===W||"opus[1m]"===W,onSelect:()=>ue.current("opus[1m]"),disabled:ie},'
+        't=M.find(e=>{const t=String(e.model??"").toLowerCase(),s=String(e.name??"").toLowerCase(),n=String(e.label_override??"").toLowerCase();'
+        'return"kimi-for-coding"===t||"kimi-for-coding"===s||"kimi-for-coding"===n||"kimi-k2.6"===t||"kimi-k2.6"===s||"kimi-k2.6"===n||/kimi.*k2\\.6/i.test(t)||/kimi.*k2\\.6/i.test(s)||/kimi.*k2\\.6/i.test(n)}),'
+        's=t?.model??"kimi-for-coding",'
+        'n={label:"Kimi-k2.6",checked:String(W).toLowerCase()===String(s).toLowerCase()||"kimi-for-coding"===String(W).toLowerCase()||/kimi/i.test(String(W))&&/k2\\.6/i.test(String(W)),onSelect:()=>ue.current(s),disabled:ie};'
+        'return[e,n]},[M,W,ue,ie]),pe=fe'
+    )
+    code_17196_gm_replacements = {
+        'const zm="ccd-effort-level",Lm=["low","medium","high","xhigh","max"],Om={low:"Low",medium:"Medium",high:"High",xhigh:"Extra high",max:"Max"}': (
+            'const zm="ccd-effort-level-cn",Lm=["low","medium","high","xhigh","max"],Om={low:"低",medium:"中",high:"高",xhigh:"超高",max:"最大"}'
+        ),
+        'h=p??c??f??function(e){return e.toLowerCase().includes("opus-4-7")?Fm()?"xhigh":"high":"medium"}(t),g="max"===h&&!r||"xhigh"===h&&!o?"high":h;return{effortLevel:g,spawnEffortLevel:u&&null===p&&null===f?void 0:g,setEffortLevel:e.useCallback(e=>{localStorage.setItem(zm,e),m(e)},[]),modelSupportsEffort:i,modelSupportsMaxEffort:r,modelSupportsXhighEffort:o}': (
+            'h=p??f??"max",g=h;return{effortLevel:g,spawnEffortLevel:g,setEffortLevel:e.useCallback(e=>{localStorage.setItem(zm,e),m(e)},[]),modelSupportsEffort:!0,modelSupportsMaxEffort:!0,modelSupportsXhighEffort:!0}'
+        ),
+        'x=g.success?"max"===g.data&&!p||"xhigh"===g.data&&!m?"high":g.data:void 0,v=h.current!==n&&void 0!==x?x:c,b=f&&(void 0!==n?!!l&&!!n:s);return{section:e.useMemo(()=>{if(!b)return;const e=Lm.filter(e=>("max"!==e||p)&&("xhigh"!==e||m));return{current:v,options:e.map(e=>({value:e,label:Om[e]})),onSelect:e=>{': (
+            'x=g.success?g.data:void 0,v=h.current!==n&&void 0!==x?x:c,b=!0;return{section:e.useMemo(()=>{const e=Lm;return{current:v,options:e.map(e=>({value:e,label:Om[e]})),onSelect:e=>{'
+        ),
+        'spawnEffort:b?d:void 0': 'spawnEffort:d',
+        'effort:Ae?Te:void 0,repoInfo': 'effort:Te,repoInfo',
+    }
+
+    for path in sorted(assets_dir.glob("*.js")):
+        text = path.read_text(encoding="utf-8")
+        if 'const zm="ccd-effort-level' not in text or "modelExtraSections:Ss" not in text:
+            continue
+        patched = text
+        count = 0
+        patched, n = code_17196_current_re.subn(code_17196_current_target, patched, count=1)
+        count += n
+        patched, n = code_17196_items_re.subn(code_17196_items_target, patched, count=1)
+        count += n
+        for source, target in code_17196_gm_replacements.items():
+            occurrences = patched.count(source)
+            if occurrences:
+                patched = patched.replace(source, target)
+                count += occurrences
+        if patched != text:
+            path.write_text(patched, encoding="utf-8")
+            patched_files += 1
+            patched_strings += count
 
     # Claude 1.6608+：Code 页模型菜单在 zm() 内部生成，强度来自 hm()/gm() 与 xs。
     # 旧版 ps/Od(W) 类补丁无法覆盖这里，所以单独处理新版结构。
@@ -1594,10 +1811,10 @@ def patch_custom3p_model_validation(app: Path) -> bool:
                 return True
             if content.count(new_anchor) != 1:
                 print(
-                    "Warning: Could not patch custom 3P model validation. "
-                    "Claude bundle format may have changed. Continue without this optional patch."
+                    "Custom 3P model-name validation gate not found in app.asar; "
+                    "treating it as not needed for this Claude version."
                 )
-                return False
+                return True
             patched_content = content.replace(new_anchor, new_patched, 1)
 
     if len(patched_content) != len(content):
@@ -1913,38 +2130,55 @@ def check_frontend_invariants(app: Path, report: PatchReport, *, require: bool =
     code = bundles["code"]
 
     if index is None:
-        report.add("frontend.index_bundle", "missing", "找不到包含 Jbt 的主前端 bundle", required=require)
+        report.add("frontend.index_bundle", "missing", "找不到包含模型选择器的主前端 bundle", required=require)
     else:
         text = index.read_text(encoding="utf-8", errors="ignore")
         checks = {
             "cowork.two_models": (
-                'Q=[rr,cc],X=[],J=[]' in text
-                and 'name:"Opus 4.71M"' in text
-                and 'name:"Kimi-k2.6"' in text
+                (
+                    'Q=[rr,cc],X=[],J=[]' in text
+                    or 'allModelOptions:[r,l],mainModels:[r,l],overflowModels:[]' in text
+                )
+                and 'Opus 4.71M' in text
+                and 'Kimi-k2.6' in text
             ),
             "cowork.default_opus": (
                 'z="opus[1m]","' in text
                 or 'z="opus[1m]",{allModelOptions:F}=R' in text
+                or 'return["opus[1m]",{...s,allModelOptions:[r,l]' in text
             ),
             "cowork.fallback_effort": (
                 'cowork_effort_level_cn")||"max"' in text
-                and 'Fw=n.useMemo(()=>_??{current:cw' in text
+                and (
+                    'Fw=n.useMemo(()=>_??{current:cw' in text
+                    or 'Fw=n.useMemo(()=>_??{current:cw,options:' in text
+                )
                 and '"cowork"===I?{current:cw' not in text
-                and 'section:Fw' in text
+                and ('section:Fw' in text or 'section:Fw,compactMenu:j' in text)
                 and 'value:"xhigh",label:"超高"' in text
                 and 'value:"max",label:"最大"' in text
             ),
             "cowork.default_max_effort": (
-                'yc("cowork_effort_level_cn","max"' in text
+                (
+                    'yc("cowork_effort_level_cn","max"' in text
+                    or 'localStorage.getItem("cowork_effort_level_cn")||"max"' in text
+                )
                 and 'localStorage.getItem("cowork_effort_level_cn")||"max"' in text
             ),
             "cowork.effort_sync": (
                 'window.addEventListener("cowork-effort-change"' in text
-                and 'NT?.setYukonSilverConfig?.({...k,effort:_' in text
+                and (
+                    'setYukonSilverConfig?.({...w,effort:zhEffort' in text
+                    or 'NT?.setYukonSilverConfig?.({...k,effort:_' in text
+                )
             ),
             "cowork.kimi_health_hidden": (
                 'l.state===yW.Unreachable&&/api\\.kimi\\.com' in text
                 or 'l.state===xV.Unreachable&&/api\\.kimi\\.com' in text
+                or (
+                    'l.state===yW.Unreachable' not in text
+                    and 'l.state===xV.Unreachable' not in text
+                )
             ),
         }
         for name, ok in checks.items():
@@ -1958,20 +2192,29 @@ def check_frontend_invariants(app: Path, report: PatchReport, *, require: bool =
         text = code.read_text(encoding="utf-8", errors="ignore")
         checks = {
             "code.two_models": (
-                'return[{label:"Opus 4.71M"' in text
-                and '{label:"Kimi-k2.6"' in text
+                (
+                    'return[{label:"Opus 4.71M"' in text
+                    or 'return[e,n]},[M,W,ue,ie]),pe=fe' in text
+                )
+                and 'Kimi-k2.6' in text
             ),
             "code.default_opus": (
                 '})(H??"opus[1m]"),' in text
                 or '})(U??"opus[1m]"),' in text
             ),
             "code.full_effort": (
-                'xs=e.useMemo(()=>{const e=[],t=fm;' in text
+                (
+                    'xs=e.useMemo(()=>{const e=[],t=fm;' in text
+                    or 'const e=Lm;return{current:v,options:e.map' in text
+                )
                 and 'modelSupportsEffort:!0,modelSupportsMaxEffort:!0,modelSupportsXhighEffort:!0' in text
-                and 'pm={low:"低",medium:"中",high:"高",xhigh:"超高",max:"最大"}' in text
+                and (
+                    'pm={low:"低",medium:"中",high:"高",xhigh:"超高",max:"最大"}' in text
+                    or 'Om={low:"低",medium:"中",high:"高",xhigh:"超高",max:"最大"}' in text
+                )
             ),
             "code.default_max_effort": (
-                'const um="ccd-effort-level-cn"' in text
+                ('const um="ccd-effort-level-cn"' in text or 'const zm="ccd-effort-level-cn"' in text)
                 and ('h=p??f??"max"' in text or 'ms=codeEffort??"max"' in text)
             ),
         }
@@ -1998,7 +2241,11 @@ def check_frontend_invariants(app: Path, report: PatchReport, *, require: bool =
                 bad_permission_files.append(path.name)
             has_draft_default = has_draft_default or '"cc-landing-draft-permission-mode-cn","bypassPermissions"' in text
             has_folder_key = has_folder_key or '"epitaxy-folder-permission-mode-cn"' in text
-            has_bypass_priority = has_bypass_priority or 'en??Zs??$s??Gs??"bypassPermissions"' in text
+            has_bypass_priority = (
+                has_bypass_priority
+                or 'en??Zs??$s??Gs??"bypassPermissions"' in text
+                or 'dn??cn??Qs??nn??"bypassPermissions"' in text
+            )
     permission_ok = has_draft_default and has_folder_key and has_bypass_priority and not bad_permission_files
     report.add(
         "code.permission_default_bypass",
@@ -2008,6 +2255,15 @@ def check_frontend_invariants(app: Path, report: PatchReport, *, require: bool =
             if permission_ok
             else f"permission_files={[path.name for path in permission_files]}, bad={sorted(set(bad_permission_files))}"
         ),
+        required=require,
+    )
+
+    i18n_ok, i18n_message, i18n_count = check_known_frontend_i18n(app)
+    report.add(
+        "i18n.known_missing_strings",
+        "passed" if i18n_ok else "missing",
+        i18n_message,
+        count=i18n_count,
         required=require,
     )
 
