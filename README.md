@@ -75,6 +75,8 @@ Logs/patch-report-YYYYMMDD-HHMMSS.json
 - Cowork 和 Code 都必须固定显示两个模型入口，并显示五档强度：`低 / 中 / 高 / 超高 / 最大`，默认是 `Opus 4.71M · 最大`。
 - Code 新建会话默认权限模式是 `绕过权限`。如果其他电脑又显示 `接受编辑`，先看 `Logs/latest.json` 里的 `code.permission_default_bypass`。
 - 新版页面若又出现已记录过的英文残留，先看 `Logs/latest.json` 里的 `i18n.known_missing_strings`，它会列出缺失或仍等于英文原文的 i18n key。
+- 开启开发者模式后，如果开发者菜单又出现英文，先看 `Logs/latest.json` 里的 `i18n.developer_menu_labels`。
+- “配置第三方推理”窗口如果又出现英文，先看 `Logs/latest.json` 里的 `i18n.custom3p_setup_labels`。
 - 复制到其他电脑时，推荐复制本项目并在目标电脑重新运行 `install.command`，不要直接复制已经补丁过的 `/Applications/Claude.app`。
 - Claude Desktop 每次更新后都要重新运行补丁；如果新版 bundle 结构变化，安装会因 invariant 失败而中止，不会覆盖成半残 app。
 - 已适配 Claude Desktop `1.6608.2` 与 `1.7196.0` 的共享模型选择器和第三方模型校验开关；后续版本如再次变动，优先看 `Logs/latest.json` 的失败项。

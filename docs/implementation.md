@@ -266,7 +266,7 @@ Claude Desktop 更新后，前端 bundle 文件名和压缩变量名经常变化
 
 新版 Claude 经常改 bundle 文件名和压缩变量名。为了避免补丁点失效后仍替换 `/Applications/Claude.app`，脚本现在有两套诊断机制：
 
-1. 安装流程会在替换原 app 前运行 `check_frontend_invariants()`。必过项包括 Cowork 两模型、Cowork 五档强度、Cowork 强度同步、Code 两模型、Code 五档强度、Code 默认绕过权限、已知未汉化文案检查、Kimi 健康横幅隐藏、JS 语法检查、第三方模型校验补丁和签名验证。
+1. 安装流程会在替换原 app 前运行 `check_frontend_invariants()`。必过项包括 Cowork 两模型、Cowork 五档强度、Cowork 强度同步、Code 两模型、Code 五档强度、Code 默认绕过权限、已知未汉化文案检查、开发者菜单汉化检查、第三方推理设置页汉化检查、Kimi 健康横幅隐藏、JS 语法检查、第三方模型校验补丁和签名验证。
 2. `--diagnose` 只读模式会检查当前 `/Applications/Claude.app`，并写入诊断日志，不修改任何文件。
 
 日志路径：
@@ -278,7 +278,7 @@ Logs/patch-report-YYYYMMDD-HHMMSS.json
 
 `Logs/` 固定在项目根目录，也就是 `install.command` 同级。这样把项目复制到其他电脑后，异常机器生成的日志也在同一个文件夹里，方便直接打包发回。脚本通过 sudo 运行时，会把 `Logs/` 及生成的 JSON 文件 owner 改回当前用户，避免日志文件变成 root-owned。
 
-日志中的每个补丁点会记录 `passed`、`applied`、`already_patched`、`missing` 或 `failed`，并带上目标 bundle 文件名和 Claude 版本。`i18n.known_missing_strings` 会检查已经记录过的易漏英文文案 key，发现缺失、仍等于 en-US 原文或不含中文字符时会进入 `required_failures`。日志不记录 API Key、token、请求内容或用户对话。
+日志中的每个补丁点会记录 `passed`、`applied`、`already_patched`、`missing` 或 `failed`，并带上目标 bundle 文件名和 Claude 版本。`i18n.known_missing_strings` 会检查已经记录过的易漏英文文案 key，发现缺失、仍等于 en-US 原文或不含中文字符时会进入 `required_failures`。`i18n.developer_menu_labels` 会检查开发者模式下主进程菜单的额外调试项是否仍是英文。`i18n.custom3p_setup_labels` 会检查“配置第三方推理”窗口的 asar 与前端 bundle 文案是否仍有已记录的英文残留。日志不记录 API Key、token、请求内容或用户对话。
 
 如果其他电脑出现 Cowork 只有模型没有强度、Code 只显示 `· 高`、`Legacy Model`、Kimi 不能切换等问题，优先运行：
 
@@ -286,7 +286,7 @@ Logs/patch-report-YYYYMMDD-HHMMSS.json
 /usr/bin/python3 patch_claude_zh_cn.py --diagnose --app /Applications/Claude.app
 ```
 
-然后看 `latest.json` 的 `required_failures`。如果失败项是 `cowork.default_opus` / `code.default_opus`，说明默认模型仍可能被旧缓存覆盖；如果是 `cowork.default_max_effort` / `code.default_max_effort`，说明默认最大强度没有命中；如果失败项是 `cowork.fallback_effort`，说明共享选择器强度 fallback 没命中；如果失败项是 `code.full_effort`，说明 Code 的 `xs` 强度构建没有被无条件替换；如果失败项是 `code.permission_default_bypass`，说明默认“绕过权限”补丁没命中新版 bundle；如果失败项是 `i18n.known_missing_strings`，说明已记录过的英文残留 key 没有写入当前 `zh-CN.json`；如果是 `syntax.*`，说明 bundle 补丁破坏了 JS 语法，安装流程应当已经中止。
+然后看 `latest.json` 的 `required_failures`。如果失败项是 `cowork.default_opus` / `code.default_opus`，说明默认模型仍可能被旧缓存覆盖；如果是 `cowork.default_max_effort` / `code.default_max_effort`，说明默认最大强度没有命中；如果失败项是 `cowork.fallback_effort`，说明共享选择器强度 fallback 没命中；如果失败项是 `code.full_effort`，说明 Code 的 `xs` 强度构建没有被无条件替换；如果失败项是 `code.permission_default_bypass`，说明默认“绕过权限”补丁没命中新版 bundle；如果失败项是 `i18n.known_missing_strings`，说明已记录过的英文残留 key 没有写入当前 `zh-CN.json`；如果失败项是 `i18n.developer_menu_labels`，说明开发者菜单主进程文案没有写入 `app.asar`；如果失败项是 `i18n.custom3p_setup_labels`，说明“配置第三方推理”窗口的 asar 或前端 bundle 仍有已记录的英文残留；如果是 `syntax.*`，说明 bundle 补丁破坏了 JS 语法，安装流程应当已经中止。
 
 ### 10. app.asar 修改和完整性更新
 

@@ -73,6 +73,37 @@ KNOWN_FRONTEND_I18N_KEYS: dict[str, str] = {
     "xyS7d891o+": "隐私页：诊断报告发送说明",
 }
 
+DEV_MENU_LABEL_REPLACEMENTS: dict[str, str] = {
+    'label:"Enable Main Process Debugger"': 'label:"启用主进程调试器"',
+    'label:"Record Performance Trace"': 'label:"录制性能跟踪"',
+    'label:"Write Main Process Heap Snapshot"': 'label:"写入主进程堆快照"',
+    'label:"Record Memory Trace (auto-stop)"': 'label:"录制内存跟踪（自动停止）"',
+}
+
+CUSTOM3P_SETUP_REPLACEMENTS: dict[str, str] = {
+    'category:"appearance"': 'category:"外观"',
+    'group:"Organization banner"': 'group:"组织横幅"',
+    'hint:"A persistent banner across the top of the app window after sign-in."': 'hint:"登录后在应用窗口顶部显示的常驻横幅。"',
+    'label:"Show banner"': 'label:"显示横幅"',
+    'label:"Banner text"': 'label:"横幅文本"',
+    'placeholder:"Internal use only"': 'placeholder:"仅供内部使用"',
+    'hint:"Single line, truncated on overflow. Maximum 200 characters."': 'hint:"单行显示，超出部分会截断。最多 200 个字符。"',
+    'label:"Background color"': 'label:"背景颜色"',
+    'hint:"Six-digit hex (#RRGGBB). Applied exactly as configured; not theme-adapted."': 'hint:"六位十六进制颜色（#RRGGBB）。会按配置原样应用，不随主题自适应。"',
+    'label:"Text color"': 'label:"文本颜色"',
+    'hint:"Org-pushed MCP servers — remote (HTTP/SSE) or local (stdio command). May embed bearer tokens."': 'hint:"组织推送的 MCP 服务器，可以是远程（HTTP/SSE）或本地（stdio 命令）。可能包含 Bearer 令牌。"',
+    '"None configured."': '"未配置。"',
+    'hint:"Reject desktop extensions that are not signed by a trusted publisher."': 'hint:"拒绝未由受信任发布者签名的桌面扩展。"',
+    'hint:"Show the Code tab (terminal-based coding sessions). Sessions run on the host, not inside the VM."': 'hint:"显示 Code 标签页（基于终端的编码会话）。会话在主机上运行，而不是在虚拟机内运行。"',
+    'title:"Disable claude:// deep-link handling"': 'title:"禁用 claude:// 深度链接处理"',
+    'hint:"Stop external apps and websites from opening Cowork via claude:// links."': 'hint:"阻止外部应用和网站通过 claude:// 链接打开 Cowork。"',
+    'hint:"Full URL of the inference gateway endpoint."': 'hint:"推理网关端点的完整 URL。"',
+    'hint:"How the gateway credential is sent. Choose Bearer or x-api-key for a static key or credential-helper output; choose SSO to have each user sign in via your identity provider."': 'hint:"网关凭据的发送方式。静态密钥或凭据辅助脚本输出请选择 Bearer 或 x-api-key；如需每个用户通过身份提供商登录，请选择 SSO。"',
+    'hint:"Extra headers sent to the gateway. One value per header name. For tenant routing, org IDs, etc."': 'hint:"发送到网关的额外请求头。每个请求头名称对应一个值。可用于租户路由、组织 ID 等。"',
+    'hint:"Users see only this provider at the login screen — the option to sign in to Anthropic is hidden."': 'hint:"用户在登录界面只会看到此提供商，登录 Anthropic 的选项会被隐藏。"',
+    'title:"Hide Anthropic sign-in"': 'title:"隐藏 Anthropic 登录"',
+}
+
 
 @dataclass
 class PatchEvent:
@@ -243,6 +274,51 @@ def check_custom3p_validation_patched(app: Path) -> bool:
         b"function _Zt(e,A){if(!bbA||!(A!=null&&A.length))return null;",
     ]
     return not any(anchor in content for anchor in known_validation_gates)
+
+
+def read_asar_text(app: Path, file_path: str) -> str:
+    path = app / APP_ASAR_REL
+    require_file(path)
+    data = path.read_bytes()
+    header_size, _header_string, header = read_asar_header(data, path)
+    entry = get_asar_file_entry(header, file_path)
+    content_offset = 8 + header_size + int(entry["offset"])
+    content_size = int(entry["size"])
+    return data[content_offset : content_offset + content_size].decode("utf-8", errors="ignore")
+
+
+def check_developer_menu_i18n(app: Path) -> tuple[bool, str, int]:
+    try:
+        content = read_asar_text(app, ASAR_PATCH_TARGET)
+    except Exception as exc:
+        return False, f"读取 app.asar 失败：{exc}", 0
+    missing: list[str] = []
+    for source, target in DEV_MENU_LABEL_REPLACEMENTS.items():
+        if target not in content:
+            missing.append(target)
+        if source in content:
+            missing.append(f"仍存在英文：{source}")
+    return not missing, "; ".join(missing), len(DEV_MENU_LABEL_REPLACEMENTS)
+
+
+def check_custom3p_setup_i18n(app: Path) -> tuple[bool, str, int]:
+    try:
+        texts = [read_asar_text(app, ASAR_PATCH_TARGET)]
+    except Exception as exc:
+        return False, f"读取 app.asar 失败：{exc}", 0
+    assets_dir = app / FRONTEND_ASSETS_REL
+    if assets_dir.exists():
+        for path in sorted(assets_dir.glob("*.js")):
+            texts.append(path.read_text(encoding="utf-8", errors="ignore"))
+    combined = "\n".join(texts)
+
+    failures: list[str] = []
+    for source, target in CUSTOM3P_SETUP_REPLACEMENTS.items():
+        if source in combined:
+            failures.append(f"仍存在英文：{source}")
+        if target not in combined:
+            failures.append(f"缺少中文：{target}")
+    return not failures, "; ".join(failures), len(CUSTOM3P_SETUP_REPLACEMENTS)
 
 
 def check_known_frontend_i18n(app: Path) -> tuple[bool, str, int]:
@@ -575,6 +651,7 @@ def patch_hardcoded_frontend_strings(app: Path) -> None:
         'label:"Scheduled"': 'label:"计划任务"',
         'label:"Customize"': 'label:"自定义"',
     }
+    replacements.update(CUSTOM3P_SETUP_REPLACEMENTS)
     patched_files = 0
     patched_strings = 0
 
@@ -752,6 +829,14 @@ def patch_kimi_gateway_health_banner(assets_dir: Path) -> tuple[int, int]:
             'if(d||!l||!w||l.state===yW.Unreachable&&'
             '/api\\.kimi\\.com(?:\\/coding)?/i.test(String(l.endpoint??l.requestUrl??"")))return null;'
             'const k=l.state===yW.InvalidConfig||l.state===yW.AuthFailed||l.state===yW.BootstrapError'
+        ),
+        (
+            'if(d||!l||!w)return null;'
+            'const k=l.state===wz.InvalidConfig||l.state===wz.AuthFailed||l.state===wz.BootstrapError'
+        ): (
+            'if(d||!l||!w||l.state===wz.Unreachable&&'
+            '/api\\.kimi\\.com(?:\\/coding)?/i.test(String(x??l.endpoint??l.requestUrl??"")))return null;'
+            'const k=l.state===wz.InvalidConfig||l.state===wz.AuthFailed||l.state===wz.BootstrapError'
         ),
     }
     patched_files = 0
@@ -1904,6 +1989,8 @@ def patch_native_menu_role_labels(app: Path) -> None:
         '{role:"minimize"}': '{label:"最小化",role:"minimize"}',
         '{role:"front"}': '{label:"全部置于前面",role:"front"}',
     }
+    replacements.update(DEV_MENU_LABEL_REPLACEMENTS)
+    replacements.update(CUSTOM3P_SETUP_REPLACEMENTS)
     count = patch_asar_file_with_replacements(app, ASAR_PATCH_TARGET, replacements)
     print(f"Patched native menu role labels in app.asar: {count} replacements")
 
@@ -2173,11 +2260,16 @@ def check_frontend_invariants(app: Path, report: PatchReport, *, require: bool =
                 )
             ),
             "cowork.kimi_health_hidden": (
-                'l.state===yW.Unreachable&&/api\\.kimi\\.com' in text
-                or 'l.state===xV.Unreachable&&/api\\.kimi\\.com' in text
+                (
+                    'function tGt({initialHealth:e})' in text
+                    and 'l.state===wz.Unreachable&&/api\\.kimi\\.com' in text
+                )
                 or (
-                    'l.state===yW.Unreachable' not in text
-                    and 'l.state===xV.Unreachable' not in text
+                    'function tGt({initialHealth:e})' not in text
+                    and (
+                        'l.state===yW.Unreachable&&/api\\.kimi\\.com' in text
+                        or 'l.state===xV.Unreachable&&/api\\.kimi\\.com' in text
+                    )
                 )
             ),
         }
@@ -2264,6 +2356,24 @@ def check_frontend_invariants(app: Path, report: PatchReport, *, require: bool =
         "passed" if i18n_ok else "missing",
         i18n_message,
         count=i18n_count,
+        required=require,
+    )
+
+    dev_menu_ok, dev_menu_message, dev_menu_count = check_developer_menu_i18n(app)
+    report.add(
+        "i18n.developer_menu_labels",
+        "passed" if dev_menu_ok else "missing",
+        dev_menu_message,
+        count=dev_menu_count,
+        required=require,
+    )
+
+    custom3p_setup_ok, custom3p_setup_message, custom3p_setup_count = check_custom3p_setup_i18n(app)
+    report.add(
+        "i18n.custom3p_setup_labels",
+        "passed" if custom3p_setup_ok else "missing",
+        custom3p_setup_message,
+        count=custom3p_setup_count,
         required=require,
     )
 
