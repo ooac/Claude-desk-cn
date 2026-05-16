@@ -29,6 +29,8 @@ import subprocess
 import struct
 import sys
 import tempfile
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -49,6 +51,25 @@ DESKTOP_RESOURCES_REL = Path("Contents/Resources")
 ASAR_PATCH_TARGET = ".vite/build/index.js"
 ASAR_INTEGRITY_BLOCK_SIZE = 4 * 1024 * 1024
 REPORT_DIR = ROOT / "Logs"
+SAFE_OPUS_MODEL_ID = "opus"
+LEGACY_1M_OPUS_MODEL_ID = "opus[1m]"
+OPUS_DISPLAY_NAME = "Opus 4.71M"
+CLAUDE_CODE_CONTEXT_WINDOW_KEY = "tengu_hawthorn_window"
+CONTEXT_WINDOW_KEYS = (
+    "context_length",
+    "contextWindow",
+    "max_input_tokens",
+    "max_context_length",
+    "input_token_limit",
+    "max_tokens",
+)
+TOKEN_LIMIT_ERROR_RE = re.compile(
+    r"exceeded model token limit:\s*(?P<limit>\d+)\s*\(requested:\s*(?P<requested>\d+)\)",
+    re.IGNORECASE,
+)
+SESSION_TEXT_KEEP_CHARS = 12_000
+SESSION_SNIPPET_KEEP_CHARS = 4_000
+SESSION_LONG_FIELD_KEEP_CHARS = 1_000
 
 LANG_LIST_RE = re.compile(
     r'\["en-US","de-DE","fr-FR","ko-KR","ja-JP","es-419","es-ES","it-IT","hi-IN","pt-BR","id-ID"(.*?)\]'
@@ -390,6 +411,41 @@ def quit_claude() -> None:
     run(["osascript", "-e", 'tell application "Claude" to quit'], check=False)
 
 
+def active_claude_code_processes(user_home: Path) -> list[dict[str, str]]:
+    """列出 Claude Desktop 拉起的 Claude Code / disclaimer 子进程。"""
+    result = run(["ps", "ax", "-o", "pid=,command="], check=False)
+    processes: list[dict[str, str]] = []
+    support_prefix = str(user_home / "Library/Application Support/Claude-3p/claude-code")
+    for raw in result.stdout.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        pid, _, command = line.partition(" ")
+        if not pid.isdigit():
+            continue
+        if support_prefix not in command:
+            continue
+        if "/Contents/MacOS/claude" not in command and "/Contents/Helpers/disclaimer" not in command:
+            continue
+        model_match = re.search(r"(?:^|\s)--model\s+(\S+)", command)
+        processes.append({"pid": pid, "model": model_match.group(1) if model_match else "", "command": command})
+    return processes
+
+
+def terminate_claude_code_children(user_home: Path, dry_run: bool) -> int:
+    """退出 Claude 后清掉旧 Claude Code 子进程，避免继续沿用旧 --model opus。"""
+    processes = active_claude_code_processes(user_home)
+    if not processes:
+        return 0
+    pids = [item["pid"] for item in processes]
+    if dry_run:
+        print(f"[dry-run] Would terminate Claude Code child process(es): {', '.join(pids)}")
+        return len(pids)
+    print(f"Terminating Claude Code child process(es): {', '.join(pids)}")
+    run(["kill", *pids], check=False)
+    return len(pids)
+
+
 def copy_app(src: Path, dst: Path) -> None:
     if dst.exists():
         shutil.rmtree(dst)
@@ -421,7 +477,21 @@ def patch_language_whitelist(app: Path) -> Path:
     raise SystemExit("Could not patch language whitelist. Claude's bundle format may have changed.")
 
 
-def patch_hardcoded_frontend_strings(app: Path) -> None:
+def safe_runtime_model_id(model: str | None) -> str:
+    """返回可传给 Claude Code CLI 的真实 provider 模型，不能是 Opus 显示别名。"""
+    if not isinstance(model, str) or not model.strip():
+        return "kimi-for-coding"
+    lowered = model.strip().lower()
+    if lowered in {SAFE_OPUS_MODEL_ID, LEGACY_1M_OPUS_MODEL_ID}:
+        return "kimi-for-coding"
+    return model.strip()
+
+
+def patch_hardcoded_frontend_strings(
+    app: Path,
+    context_window: int | None = None,
+    runtime_model: str | None = None,
+) -> None:
     assets_dir = app / FRONTEND_ASSETS_REL
     replacements = {
         '"New task"': '"新建任务"',
@@ -734,10 +804,10 @@ def patch_hardcoded_frontend_strings(app: Path) -> None:
             patched_files += 1
             patched_strings += count
 
-    epitaxy_files, epitaxy_count = patch_epitaxy_model_menu(assets_dir)
+    epitaxy_files, epitaxy_count = patch_epitaxy_model_menu(assets_dir, runtime_model)
     patched_files += epitaxy_files
     patched_strings += epitaxy_count
-    cowork_files, cowork_count = patch_cowork_model_menu(assets_dir)
+    cowork_files, cowork_count = patch_cowork_model_menu(assets_dir, runtime_model)
     patched_files += cowork_files
     patched_strings += cowork_count
     cache_files, cache_count = patch_epitaxy_cache_bust(app / "Contents/Resources/ion-dist", assets_dir)
@@ -749,6 +819,12 @@ def patch_hardcoded_frontend_strings(app: Path) -> None:
     permission_files, permission_count = patch_permission_defaults(assets_dir)
     patched_files += permission_files
     patched_strings += permission_count
+    safe_opus_files, safe_opus_count = patch_safe_opus_context(assets_dir)
+    patched_files += safe_opus_files
+    patched_strings += safe_opus_count
+    context_usage_files, context_usage_count = patch_context_usage_percent(assets_dir, context_window)
+    patched_files += context_usage_files
+    patched_strings += context_usage_count
 
     print(f"Patched hardcoded frontend strings: {patched_strings} replacements in {patched_files} files")
 
@@ -808,6 +884,134 @@ def patch_permission_defaults(assets_dir: Path) -> tuple[int, int]:
             patched_files += 1
             patched_strings += count
 
+    return patched_files, patched_strings
+
+
+def patch_safe_opus_context(assets_dir: Path) -> tuple[int, int]:
+    """保留 Opus 显示入口，但避免把 1M 名称当成固定真实上下文能力。"""
+    replacements = {
+        'z="opus[1m]",': 'z="opus",',
+        'z="opus[1m]",{allModelOptions:F}=R,': 'z="opus",{allModelOptions:F}=R,',
+        'return["opus[1m]",{...s,allModelOptions:[r,l]': 'return["opus",{...s,allModelOptions:[r,l]',
+        'model:"opus[1m]",name:"Opus 4.71M"': 'model:"opus",name:"Opus 4.71M"',
+        'model:"opus[1m]",name:"Opus 4.7 1M"': 'model:"opus",name:"Opus 4.71M"',
+        'yc("baku_model","model","opus[1m]"': 'yc("baku_model","model","opus"',
+        'jc("baku_model","model","opus[1m]"': 'jc("baku_model","model","opus"',
+        'pc("baku_model","model","opus[1m]"': 'pc("baku_model","model","opus"',
+        'if(!e)return"opus[1m]";': 'if(!e)return"opus";',
+        'if("opus"===t||"opus[1m]"===t)return"opus[1m]";': (
+            'if("opus"===t||"opus[1m]"===t)return"opus";'
+        ),
+        'return s?s.model:"opus[1m]"': 'return s?s.model:"opus"',
+        '?s.model:"opus[1m]"': '?s.model:"opus"',
+        ':"opus[1m]")': ':"opus")',
+        '})(H??"opus[1m]"),': '})(H??"opus"),',
+        '})(U??"opus[1m]"),': '})(U??"opus"),',
+        'onSelect:()=>ue.current("opus[1m]")': 'onSelect:()=>ue.current("opus")',
+        'onSelect:()=>N.current("opus[1m]")': 'onSelect:()=>N.current("opus")',
+        'onSelect:()=>Re.current("opus[1m]")': 'onSelect:()=>Re.current("opus")',
+        'ue.current("opus[1m]")': 'ue.current("opus")',
+        'N.current("opus[1m]")': 'N.current("opus")',
+        'Re.current("opus[1m]")': 'Re.current("opus")',
+    }
+    patched_files = 0
+    patched_strings = 0
+
+    for path in sorted(assets_dir.glob("*.js")):
+        text = path.read_text(encoding="utf-8")
+        if "opus[1m]" not in text or OPUS_DISPLAY_NAME not in text:
+            continue
+        patched = text
+        count = 0
+        for source, target in replacements.items():
+            occurrences = patched.count(source)
+            if occurrences:
+                patched = patched.replace(source, target)
+                count += occurrences
+        if patched != text:
+            path.write_text(patched, encoding="utf-8")
+            patched_files += 1
+            patched_strings += count
+
+    return patched_files, patched_strings
+
+
+def patch_context_usage_percent(assets_dir: Path, context_window: int | None = None) -> tuple[int, int]:
+    """Context Usage 文本和实时面板都按 provider 真实窗口重算。"""
+    patched_files = 0
+    patched_strings = 0
+    window_literal = str(context_window) if context_window else "0"
+    replacements = {
+        'const n=ege(s[2]);if(0===n)return{text:e,usage:null};': (
+            f'const n0=ege(s[2]),n={window_literal}||n0;if(0===n)return{{text:e,usage:null}};'
+        ),
+        'const n0=ege(s[2]),n=262144||n0;if(0===n)return{text:e,usage:null};': (
+            f'const n0=ege(s[2]),n={window_literal}||n0;if(0===n)return{{text:e,usage:null}};'
+        ),
+        'const n0=ege(s[2]),n=200000||n0;if(0===n)return{text:e,usage:null};': (
+            f'const n0=ege(s[2]),n={window_literal}||n0;if(0===n)return{{text:e,usage:null}};'
+        ),
+        'const n0=ege(s[2]),n=1000000||n0;if(0===n)return{text:e,usage:null};': (
+            f'const n0=ege(s[2]),n={window_literal}||n0;if(0===n)return{{text:e,usage:null}};'
+        ),
+        (
+            'return{text:e,usage:{model:t,totalTokens:ege(s[1]),rawMaxTokens:n,'
+            'percentage:Number(s[3]),categories:a,mcpTools:r,memoryFiles:i,agents:o}}'
+        ): (
+            'const l=ege(s[1]),c=Math.round(l/n*1e3)/10;'
+            'return{text:e,usage:{model:t,totalTokens:l,rawMaxTokens:n,'
+            'percentage:c,categories:a,mcpTools:r,memoryFiles:i,agents:o}}'
+        ),
+        (
+            'return{text:e,usage:{model:t,totalTokens:ege(s[1]),rawMaxTokens:n,'
+            'percentage:Math.round(ege(s[1])/n*1e3)/10,categories:a,mcpTools:r,memoryFiles:i,agents:o}}'
+        ): (
+            'const l=ege(s[1]),c=Math.round(l/n*1e3)/10;'
+            'return{text:e,usage:{model:t,totalTokens:l,rawMaxTokens:n,'
+            'percentage:c,categories:a,mcpTools:r,memoryFiles:i,agents:o}}'
+        ),
+    }
+    for path in sorted(assets_dir.glob("*.js")):
+        text = path.read_text(encoding="utf-8")
+        if "rawMaxTokens" not in text:
+            continue
+        patched = text
+        count = 0
+        if "## Context Usage" in patched:
+            for source, target in replacements.items():
+                occurrences = patched.count(source)
+                if occurrences:
+                    patched = patched.replace(source, target)
+                    count += occurrences
+        if context_window:
+            live_replacements = {
+                'M=n?.rawMaxTokens??null,C=null!==M?Math.round(100*Math.max(0,Math.min(1,k/M))):null,': (
+                    f'M=n?{window_literal}:n?.rawMaxTokens??null,C=null!==M?Math.round(100*Math.max(0,k/M)):null,'
+                ),
+                'M=n?262144:n?.rawMaxTokens??null,C=null!==M?Math.round(100*Math.max(0,k/M)):null,': (
+                    f'M=n?{window_literal}:n?.rawMaxTokens??null,C=null!==M?Math.round(100*Math.max(0,k/M)):null,'
+                ),
+                'M=n?200000:n?.rawMaxTokens??null,C=null!==M?Math.round(100*Math.max(0,k/M)):null,': (
+                    f'M=n?{window_literal}:n?.rawMaxTokens??null,C=null!==M?Math.round(100*Math.max(0,k/M)):null,'
+                ),
+                'M=n?1000000:n?.rawMaxTokens??null,C=null!==M?Math.round(100*Math.max(0,k/M)):null,': (
+                    f'M=n?{window_literal}:n?.rawMaxTokens??null,C=null!==M?Math.round(100*Math.max(0,k/M)):null,'
+                ),
+                'N=b?C??0:d.peak??0,': 'N=b?Math.min(100,C??0):d.peak??0,',
+                'contextUsage:n??null': (
+                    f'contextUsage:n?{{...n,rawMaxTokens:{window_literal},'
+                    f'percentage:Math.round(100*Math.max(0,n.totalTokens/{window_literal}))}}:null'
+                ),
+            }
+            for source, target in live_replacements.items():
+                occurrences = patched.count(source)
+                if occurrences:
+                    patched = patched.replace(source, target)
+                    count += occurrences
+        if patched != text:
+            path.write_text(patched, encoding="utf-8")
+            patched_files += 1
+            patched_strings += count
     return patched_files, patched_strings
 
 
@@ -934,10 +1138,16 @@ def patch_epitaxy_cache_bust(ion_dist_dir: Path, assets_dir: Path) -> tuple[int,
     return patched_files, patched_strings
 
 
-def patch_cowork_model_menu(assets_dir: Path) -> tuple[int, int]:
+def patch_cowork_model_menu(assets_dir: Path, runtime_model: str | None = None) -> tuple[int, int]:
     """把 Cowork 模型菜单固定为 Opus 伪装入口、Kimi 真实入口和完整强度。"""
     patched_files = 0
     patched_strings = 0
+    provider_runtime_model = safe_runtime_model_id(runtime_model)
+    provider_runtime_model_js = json.dumps(provider_runtime_model, ensure_ascii=False)
+    cowork_runtime_mapper = (
+        f'((e)=>{{const t=String(e??"").toLowerCase();return"opus"===t||"opus[1m]"===t?{provider_runtime_model_js}:'
+        f'("kimi-k2.6"===t?"kimi-for-coding":(e??{provider_runtime_model_js}))}})'
+    )
 
     # Claude 1.6608+：Cowork 与普通入口共用 Jbt 模型选择器。
     # 这里直接把共享选择器的候选项重建为固定两项，避免 Missing/Legacy fallback。
@@ -1024,6 +1234,15 @@ def patch_cowork_model_menu(assets_dir: Path) -> tuple[int, int]:
         ),
         '_=(()=>{const e=yc("cowork_effort_level_cn","max",Mp),[t,s]=n.useState(()=>{try{return localStorage.getItem("cowork_effort_level_cn")||e}catch{return e}});return n.useEffect(()=>{const e=()=>{try{s(localStorage.getItem("cowork_effort_level_cn")||"max")}catch{s("max")}};if("undefined"==typeof window)return;e();return window.addEventListener("cowork-effort-change",e),()=>window.removeEventListener("cowork-effort-change",e)},[]),t})(),j=yc("cowork_model",T0t,I0t),': (
             '_=(()=>{const e=yc("cowork_effort_level_cn","max",Mp),[t,s]=n.useState(()=>{try{return localStorage.getItem("cowork_effort_level_cn")||e}catch{return e}});return n.useEffect(()=>{const e=()=>{try{s(localStorage.getItem("cowork_effort_level_cn")||"max")}catch{s("max")}};if("undefined"==typeof window)return;e();return window.addEventListener("cowork-effort-change",e),()=>window.removeEventListener("cowork-effort-change",e)},[]),t})(),j=yc("cowork_model",T0t,I0t),'
+        ),
+    }
+    cowork_runtime_replacements = {
+        'session_context:{sources:[],...t.sessionModel&&{model:t.sessionModel}}': (
+            f'session_context:{{sources:[],...t.sessionModel&&{{model:{cowork_runtime_mapper}(t.sessionModel)}}}}'
+        ),
+        'if(r&&r!==wt.current&&t.setModel)try{await t.setModel(e,r),a({event_key:"claudeai.cowork.model_switched",session_id:e,previous_model:wt.current??"unknown",new_model:r,session_type:uY(e)?"remote":"local"}),wt.current=r}catch(g){Ac.error(cc.LOCAL_SESSION,"Failed to set model",{error:g,sessionId:e,model:r})}': (
+            f'const zhCoworkRuntimeModel={cowork_runtime_mapper}(r);'
+            'if(zhCoworkRuntimeModel&&zhCoworkRuntimeModel!==wt.current&&t.setModel)try{await t.setModel(e,zhCoworkRuntimeModel),a({event_key:"claudeai.cowork.model_switched",session_id:e,previous_model:wt.current??"unknown",new_model:zhCoworkRuntimeModel,session_type:uY(e)?"remote":"local"}),wt.current=zhCoworkRuntimeModel}catch(g){Ac.error(cc.LOCAL_SESSION,"Failed to set model",{error:g,sessionId:e,model:zhCoworkRuntimeModel})}'
         ),
     }
 
@@ -1193,6 +1412,7 @@ def patch_cowork_model_menu(assets_dir: Path) -> tuple[int, int]:
             fht_select_source: fht_select_target,
             yukon_source: yukon_target,
             yukon_deps_source: yukon_deps_target,
+            **cowork_runtime_replacements,
         }.items():
             occurrences = patched.count(source)
             if occurrences:
@@ -1229,6 +1449,11 @@ def patch_cowork_model_menu(assets_dir: Path) -> tuple[int, int]:
             if occurrences:
                 patched = patched.replace(source, target)
                 count += occurrences
+        for source, target in cowork_runtime_replacements.items():
+            occurrences = patched.count(source)
+            if occurrences:
+                patched = patched.replace(source, target)
+                count += occurrences
         patched, n = cowork_effort_wrapper_re.subn(cowork_effort_config_target, patched, count=1)
         count += n
         patched, n = cowork_effort_config_re.subn(cowork_effort_config_target, patched, count=1)
@@ -1258,6 +1483,11 @@ def patch_cowork_model_menu(assets_dir: Path) -> tuple[int, int]:
                 patched = patched.replace(source, target)
                 count += occurrences
         for source, target in pte_replacements.items():
+            occurrences = patched.count(source)
+            if occurrences:
+                patched = patched.replace(source, target)
+                count += occurrences
+        for source, target in cowork_runtime_replacements.items():
             occurrences = patched.count(source)
             if occurrences:
                 patched = patched.replace(source, target)
@@ -1406,10 +1636,30 @@ def patch_cowork_model_menu(assets_dir: Path) -> tuple[int, int]:
     return patched_files, patched_strings
 
 
-def patch_epitaxy_model_menu(assets_dir: Path) -> tuple[int, int]:
+def patch_epitaxy_model_menu(assets_dir: Path, runtime_model: str | None = None) -> tuple[int, int]:
     """把 Claude Code 模型菜单固定为 Opus 伪装入口、Kimi 真实入口和完整强度。"""
     patched_files = 0
     patched_strings = 0
+    provider_runtime_model = safe_runtime_model_id(runtime_model)
+    provider_runtime_model_js = json.dumps(provider_runtime_model, ensure_ascii=False)
+    runtime_mapping_js = (
+        f'zhProviderModel={provider_runtime_model_js},'
+        'zhKimiModel=(M.find(e=>{const t=String(e.model??"").toLowerCase(),s=String(e.name??"").toLowerCase(),n=String(e.label_override??"").toLowerCase();'
+        'return"kimi-for-coding"===t||"kimi-for-coding"===s||"kimi-for-coding"===n||"kimi-k2.6"===t||"kimi-k2.6"===s||"kimi-k2.6"===n||/kimi.*k2\\.6/i.test(t)||/kimi.*k2\\.6/i.test(s)||/kimi.*k2\\.6/i.test(n)})?.model??("kimi-for-coding"===zhProviderModel?"kimi-for-coding":zhProviderModel)),'
+        'zhRuntimeModelFor=e=>{const t=String(e??"").toLowerCase();'
+        'return"opus"===t||"opus[1m]"===t?zhProviderModel:("kimi-for-coding"===t||"kimi-k2.6"===t||/kimi/i.test(String(e))&&/k2\\.6/i.test(String(e))?zhKimiModel:(e??zhProviderModel))},'
+        'zhRuntimeModel=zhRuntimeModelFor(W),'
+    )
+
+    def ensure_runtime_mapping(text: str) -> tuple[str, int]:
+        """兼容已经被旧脚本半补丁过的 Code chunk：有 zhRuntimeModel 使用时补回定义。"""
+        if "model:zhRuntimeModel," not in text or "zhRuntimeModelFor=" in text:
+            return text, 0
+        anchors = [",[V,G,W]),X=et()", ",[V,G,W]),X=nt()", ",[V,G,W]),Q=Xe()"]
+        for anchor in anchors:
+            if anchor in text:
+                return text.replace(anchor, anchor.replace("),", f"),{runtime_mapping_js}", 1), 1), 1
+        return text, 0
 
     # Claude 1.7196+：Code 页变量改为 zm/Um/Hm，模型菜单项在 fe/pe 中生成。
     code_17196_current_re = re.compile(
@@ -1429,7 +1679,8 @@ def patch_epitaxy_model_menu(assets_dir: Path) -> tuple[int, int]:
         '})(H??"opus[1m]"),'
         'V=M.find(e=>e.model===W),'
         'G=V?null:("opus"===W||"opus[1m]"===W?"Opus 4.71M":("kimi-for-coding"===W||/kimi/i.test(String(W))&&/k2\\.6/i.test(String(W))?"Kimi-k2.6":Ze(W))),'
-        'Q=e.useMemo(()=>("opus"===W||"opus[1m]"===W)?"Opus 4.71M":("kimi-for-coding"===W||/kimi/i.test(String(W))&&/k2\\.6/i.test(String(W)))?"Kimi-k2.6":V?ah(V):G,[V,G,W]),X=et()'
+        'Q=e.useMemo(()=>("opus"===W||"opus[1m]"===W)?"Opus 4.71M":("kimi-for-coding"===W||/kimi/i.test(String(W))&&/k2\\.6/i.test(String(W)))?"Kimi-k2.6":V?ah(V):G,[V,G,W]),'
+        f'{runtime_mapping_js}X=et()'
     )
     code_17196_items_re = re.compile(
         r'fe=e\.useMemo\(\(\)=>\{const e=M\.map\(e=>\{const t=C\.includes\(e\.model\);return\{label:t\?.*?'
@@ -1458,6 +1709,13 @@ def patch_epitaxy_model_menu(assets_dir: Path) -> tuple[int, int]:
         ),
         'spawnEffort:b?d:void 0': 'spawnEffort:d',
         'effort:Ae?Te:void 0,repoInfo': 'effort:Te,repoInfo',
+        'model:W,': 'model:zhRuntimeModel,',
+        'await(Z(te)?.setModel?.(te.id,e)),ne(te,{model:e})': (
+            'await(Z(te)?.setModel?.(te.id,zhRuntimeModelFor(e))),ne(te,{model:zhRuntimeModelFor(e)})'
+        ),
+        'Promise.resolve(Y(J,e)).then(()=>{ne({id:J,type:"local"},{model:e})})': (
+            'Promise.resolve(Y(J,zhRuntimeModelFor(e))).then(()=>{ne({id:J,type:"local"},{model:zhRuntimeModelFor(e)})})'
+        ),
     }
 
     for path in sorted(assets_dir.glob("*.js")):
@@ -1475,6 +1733,8 @@ def patch_epitaxy_model_menu(assets_dir: Path) -> tuple[int, int]:
             if occurrences:
                 patched = patched.replace(source, target)
                 count += occurrences
+        patched, n = ensure_runtime_mapping(patched)
+        count += n
         if patched != text:
             path.write_text(patched, encoding="utf-8")
             patched_files += 1
@@ -1501,7 +1761,8 @@ def patch_epitaxy_model_menu(assets_dir: Path) -> tuple[int, int]:
         'G=V?null:("opus"===W||"opus[1m]"===W?"Opus 4.71M":'
         '("kimi-for-coding"===W||/kimi/i.test(String(W))&&/k2\\.6/i.test(String(W))?"Kimi-k2.6":st(W))),'
         'Q=e.useMemo(()=>("kimi-for-coding"===W||/kimi/i.test(String(W))&&/k2\\.6/i.test(String(W)))?'
-        '"Kimi-k2.6":V?Fm(V):G,[V,G,W]),X=nt()'
+        '"Kimi-k2.6":V?Fm(V):G,[V,G,W]),'
+        f'{runtime_mapping_js}X=nt()'
     )
     code_items_re = re.compile(
         r'pe=e\.useMemo\(\(\)=>\{const e=M\.map\(e=>\{const t=C\.includes\(e\.model\);return\{label:t\?.*?'
@@ -1561,6 +1822,13 @@ def patch_epitaxy_model_menu(assets_dir: Path) -> tuple[int, int]:
             'He=Ue.success?Ue.data:void 0'
         ),
         'effort:De?_e:void 0,repoInfo': 'effort:_e,repoInfo',
+        'model:W,': 'model:zhRuntimeModel,',
+        'await(Z(te)?.setModel?.(te.id,e)),ne(te,{model:e})': (
+            'await(Z(te)?.setModel?.(te.id,zhRuntimeModelFor(e))),ne(te,{model:zhRuntimeModelFor(e)})'
+        ),
+        'Promise.resolve(Y(J,e)).then(()=>{ne({id:J,type:"local"},{model:e})})': (
+            'Promise.resolve(Y(J,zhRuntimeModelFor(e))).then(()=>{ne({id:J,type:"local"},{model:zhRuntimeModelFor(e)})})'
+        ),
     }
 
     for path in sorted(assets_dir.glob("*.js")):
@@ -1580,6 +1848,8 @@ def patch_epitaxy_model_menu(assets_dir: Path) -> tuple[int, int]:
             if occurrences:
                 patched = patched.replace(source, target)
                 count += occurrences
+        patched, n = ensure_runtime_mapping(patched)
+        count += n
         if patched != text:
             path.write_text(patched, encoding="utf-8")
             patched_files += 1
@@ -1618,7 +1888,8 @@ def patch_epitaxy_model_menu(assets_dir: Path) -> tuple[int, int]:
         'G=V?null:("opus"===W||"opus[1m]"===W?"Opus 4.71M":'
         '("kimi-for-coding"===W||/kimi/i.test(String(W))&&/k2\\.6/i.test(String(W))?"Kimi-k2.6":Ge(W))),'
         'X=e.useMemo(()=>("kimi-for-coding"===W||/kimi/i.test(String(W))&&/k2\\.6/i.test(String(W)))?'
-        '"Kimi-k2.6":V?Zp(V):G,[V,G,W]),Q=Xe()'
+        '"Kimi-k2.6":V?Zp(V):G,[V,G,W]),'
+        f'{runtime_mapping_js}Q=Xe()'
     )
 
     model_items_res = [
@@ -1714,6 +1985,13 @@ def patch_epitaxy_model_menu(assets_dir: Path) -> tuple[int, int]:
         'gs=e.useMemo(()=>{const e=[];if(ps){const t=("opus"===W||"opus[1m]"===W||"kimi-for-coding"===W||/kimi/i.test(String(W))&&/k2\\.6/i.test(String(W)))?["low","medium","high","xhigh","max"]:Ud.filter(e=>("max"!==e||De)&&("xhigh"!==e||ze));e.push({key:"effort",header:s.formatMessage(Gp.effortHeader),items:t.map(e=>({label:s.formatMessage(Vp[e]),checked:e===ms,onSelect:()=>hs(e)}))})}if(os){const t=null!==ls;e.push({key:"fastMode",header:s.formatMessage(Gp.fastModeHeader),items:[{label:s.formatMessage(Gp.fastModeToggleLabel),keepOpen:!0,disabled:t,onSelect:t?void 0:()=>Pe(!Ie),tooltip:ls??s.formatMessage(Gp.fastModeToggleHint),tooltipSide:"left",tooltipMultiline:!0,trailing:r.jsx(Id,{checked:!t&&Ie,disabled:t,"aria-hidden":!0,tabIndex:-1})}]})}return e},[ps,De,ze,ms,hs,os,ls,Ie,Pe,s,W])': effort_section_target,
         effort_section_target: effort_section_target,
         '[ps,De,ze,ms,hs,os,ls,Ie,Pe,s])': '[ps,De,ze,ms,hs,os,ls,Ie,Pe,s,W])',
+        'model:W,': 'model:zhRuntimeModel,',
+        'await(Z(te)?.setModel?.(te.id,e)),ne(te,{model:e})': (
+            'await(Z(te)?.setModel?.(te.id,zhRuntimeModelFor(e))),ne(te,{model:zhRuntimeModelFor(e)})'
+        ),
+        'Promise.resolve(Y(J,e)).then(()=>{ne({id:J,type:"local"},{model:e})})': (
+            'Promise.resolve(Y(J,zhRuntimeModelFor(e))).then(()=>{ne({id:J,type:"local"},{model:zhRuntimeModelFor(e)})})'
+        ),
     }
 
     for path in sorted(assets_dir.glob("*.js")):
@@ -1741,6 +2019,8 @@ def patch_epitaxy_model_menu(assets_dir: Path) -> tuple[int, int]:
             if occurrences:
                 patched = patched.replace(source, target)
                 count += occurrences
+        patched, n = ensure_runtime_mapping(patched)
+        count += n
         if patched != text:
             path.write_text(patched, encoding="utf-8")
             patched_files += 1
@@ -2188,6 +2468,555 @@ def set_user_locale(user_home: Path) -> None:
     set_app_language_defaults(user_home)
 
 
+def gateway_config_candidates(user_home: Path) -> list[dict[str, Any]]:
+    """读取第三方推理配置；返回值禁止写入密钥到日志。"""
+    roots = [
+        user_home / "Library/Application Support/Claude-3p/configLibrary",
+        user_home / "Library/Application Support/Claude-3p",
+    ]
+    files: list[Path] = []
+    for root in roots:
+        if not root.exists():
+            continue
+        if root.is_file():
+            files.append(root)
+            continue
+        files.extend(sorted(root.glob("*.json")))
+
+    configs: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for path in files:
+        try:
+            data = load_json(path)
+        except Exception:
+            continue
+        if not isinstance(data, dict):
+            continue
+        base_url = data.get("inferenceGatewayBaseUrl") or data.get("gatewayBaseUrl")
+        api_key = data.get("inferenceGatewayApiKey") or data.get("gatewayApiKey")
+        if not isinstance(base_url, str) or not base_url:
+            continue
+        key = (base_url.rstrip("/"), str(path))
+        if key in seen:
+            continue
+        seen.add(key)
+        configs.append({"path": path, "base_url": base_url, "api_key": api_key})
+    return configs
+
+
+def configured_model_list(user_home: Path) -> list[str]:
+    """读取用户手动配置的模型列表。第一项通常代表 provider 默认值。"""
+    candidates = [
+        user_home / "Library/Application Support/Claude-3p/config.json",
+        user_home / "Library/Application Support/Claude-3p/claude_desktop_config.json",
+    ]
+    config_dir = user_home / "Library/Application Support/Claude-3p/configLibrary"
+    if config_dir.exists():
+        candidates.extend(sorted(config_dir.glob("*.json")))
+
+    models: list[str] = []
+    seen: set[str] = set()
+    model_keys = {
+        "models",
+        "modelList",
+        "model_list",
+        "gatewayModels",
+        "inferenceGatewayModels",
+        "customModels",
+        "allowedModels",
+    }
+
+    def collect(value: Any) -> None:
+        if isinstance(value, str):
+            for part in re.split(r"[\n,]+", value):
+                model = part.strip()
+                if model and model not in seen:
+                    seen.add(model)
+                    models.append(model)
+            return
+        if isinstance(value, list):
+            for item in value:
+                if isinstance(item, str):
+                    collect(item)
+                elif isinstance(item, dict):
+                    model = item.get("model") or item.get("id") or item.get("name")
+                    if isinstance(model, str):
+                        collect(model)
+
+    def walk(obj: Any) -> None:
+        if isinstance(obj, dict):
+            for key, value in obj.items():
+                if key in model_keys:
+                    collect(value)
+                walk(value)
+        elif isinstance(obj, list):
+            for item in obj:
+                walk(item)
+
+    for path in candidates:
+        if not path.exists():
+            continue
+        try:
+            walk(load_json(path))
+        except Exception:
+            continue
+    return models
+
+
+def fetch_gateway_models(user_home: Path, timeout: float = 5.0) -> list[dict[str, Any]]:
+    """从当前第三方网关读取模型能力；失败时静默回退到本地配置。"""
+    for config in gateway_config_candidates(user_home):
+        base_url = str(config["base_url"]).rstrip("/")
+        url = base_url + "/v1/models"
+        request = urllib.request.Request(url, headers={"Accept": "application/json"})
+        api_key = config.get("api_key")
+        if isinstance(api_key, str) and api_key:
+            request.add_header("Authorization", f"Bearer {api_key}")
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                payload = json.loads(response.read().decode("utf-8", errors="replace"))
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError):
+            continue
+        raw_models = payload.get("data") if isinstance(payload, dict) else payload
+        if not isinstance(raw_models, list):
+            continue
+        models = [item for item in raw_models if isinstance(item, dict)]
+        if models:
+            return models
+    return []
+
+
+def model_id_from_gateway_model(model: dict[str, Any]) -> str | None:
+    for key in ("id", "model", "name"):
+        value = model.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def parse_positive_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int) and value > 0:
+        return value
+    if isinstance(value, float) and value > 0:
+        return int(value)
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.isdigit():
+            parsed = int(stripped)
+            return parsed if parsed > 0 else None
+    return None
+
+
+def context_window_from_model(model: dict[str, Any]) -> tuple[int | None, str | None]:
+    for key in CONTEXT_WINDOW_KEYS:
+        parsed = parse_positive_int(model.get(key))
+        if parsed:
+            return parsed, key
+    return None, None
+
+
+def model_matches_id(model: dict[str, Any], model_id: str) -> bool:
+    needle = model_id.strip().lower()
+    if not needle:
+        return False
+    for key in ("id", "model", "name", "display_name", "label", "label_override"):
+        value = model.get(key)
+        if isinstance(value, str) and value.strip().lower() == needle:
+            return True
+    return False
+
+
+def preferred_gateway_model_id(user_home: Path) -> tuple[str | None, dict[str, Any]]:
+    """返回真实 provider 默认模型 id；不返回 Opus 伪装名。"""
+    configured = configured_model_list(user_home)
+    gateway_models = fetch_gateway_models(user_home)
+    if configured:
+        metadata: dict[str, Any] = {
+            "source": "configured_model_list",
+            "model_count": len(configured),
+            "gateway_model_count": len(gateway_models),
+        }
+        for model in gateway_models:
+            if not model_matches_id(model, configured[0]):
+                continue
+            context_window, context_key = context_window_from_model(model)
+            if context_window:
+                metadata["context_window"] = context_window
+                metadata["context_source"] = f"gateway_/v1/models.{context_key}"
+            break
+        return configured[0], metadata
+
+    for model in gateway_models:
+        model_id = model_id_from_gateway_model(model)
+        if model_id:
+            context_window, context_key = context_window_from_model(model)
+            metadata = {
+                "source": "gateway_/v1/models",
+                "model_count": len(gateway_models),
+            }
+            if context_window:
+                metadata["context_window"] = context_window
+                metadata["context_source"] = f"gateway_/v1/models.{context_key}"
+            return model_id, metadata
+    return None, {"source": "unavailable", "model_count": 0}
+
+
+def context_window_from_metadata(metadata: dict[str, Any]) -> int | None:
+    parsed = parse_positive_int(metadata.get("context_window"))
+    if parsed:
+        return parsed
+    for key in CONTEXT_WINDOW_KEYS:
+        parsed = parse_positive_int(metadata.get(key))
+        if parsed:
+            return parsed
+    return None
+
+
+def read_claude_code_context_window(user_home: Path) -> tuple[int | None, str]:
+    config_path = user_home / ".claude.json"
+    if not config_path.exists():
+        return None, "missing"
+    try:
+        data = load_json(config_path)
+    except Exception:
+        return None, "unreadable"
+
+    if isinstance(data, dict):
+        root_value = parse_positive_int(data.get(CLAUDE_CODE_CONTEXT_WINDOW_KEY))
+        if root_value:
+            return root_value, "root_configured"
+
+    def find_value(value: Any, path: str = "$") -> tuple[int | None, str | None]:
+        if isinstance(value, dict):
+            parsed = parse_positive_int(value.get(CLAUDE_CODE_CONTEXT_WINDOW_KEY))
+            if parsed:
+                return parsed, path
+            for key, child in value.items():
+                parsed, source = find_value(child, f"{path}.{key}")
+                if parsed:
+                    return parsed, source
+        elif isinstance(value, list):
+            for index, child in enumerate(value):
+                parsed, source = find_value(child, f"{path}[{index}]")
+                if parsed:
+                    return parsed, source
+        return None, None
+
+    current, source = find_value(data)
+    return current, f"nested:{source}" if current and source else "missing_key"
+
+
+def sync_claude_code_context_window(user_home: Path, context_window: int | None) -> tuple[int | None, str, bool]:
+    """同步 Claude Code 运行时上下文窗口；没有 provider 能力时不硬猜。"""
+    if not context_window:
+        current, source = read_claude_code_context_window(user_home)
+        return current, source, False
+
+    config_path = user_home / ".claude.json"
+    if not config_path.exists():
+        return None, "missing", False
+    try:
+        data = load_json(config_path)
+    except Exception as exc:
+        print(f"Warning: cannot update Claude Code runtime JSON: {config_path}: {exc}")
+        return None, "unreadable", False
+
+    changed = False
+
+    def update(value: Any) -> None:
+        nonlocal changed
+        if isinstance(value, dict):
+            if CLAUDE_CODE_CONTEXT_WINDOW_KEY in value:
+                if value.get(CLAUDE_CODE_CONTEXT_WINDOW_KEY) != context_window:
+                    value[CLAUDE_CODE_CONTEXT_WINDOW_KEY] = context_window
+                    changed = True
+            for child in value.values():
+                update(child)
+        elif isinstance(value, list):
+            for child in value:
+                update(child)
+
+    if isinstance(data, dict):
+        if data.get(CLAUDE_CODE_CONTEXT_WINDOW_KEY) != context_window:
+            data[CLAUDE_CODE_CONTEXT_WINDOW_KEY] = context_window
+            changed = True
+        update(data)
+
+    if changed:
+        save_json(config_path, data)
+        sudo_uid = os.environ.get("SUDO_UID")
+        sudo_gid = os.environ.get("SUDO_GID")
+        if sudo_uid and sudo_gid:
+            os.chown(config_path, int(sudo_uid), int(sudo_gid))
+        print(f"Set Claude Code context window: {context_window}")
+        return context_window, "root_synced", True
+    return context_window, "root_already_synced", False
+
+
+def set_claude_code_dynamic_defaults(user_home: Path) -> tuple[str | None, dict[str, Any]]:
+    """同步 Claude Code 默认值：模型跟随真实 provider，强度仍默认最大。"""
+    settings = user_home / ".claude/settings.json"
+    if not settings.exists():
+        return None, {"source": "settings_missing"}
+    try:
+        data = load_json(settings)
+    except Exception as exc:
+        print(f"Warning: cannot update Claude Code settings JSON: {settings}: {exc}")
+        return None, {"source": "settings_unreadable"}
+
+    preferred_model, metadata = preferred_gateway_model_id(user_home)
+    changed = False
+    if preferred_model and data.get("model") != preferred_model:
+        data["model"] = preferred_model
+        changed = True
+    if data.get("effortLevel") != "max":
+        data["effortLevel"] = "max"
+        changed = True
+    if not changed:
+        print(f"Claude Code defaults already match provider/default effort: {settings}")
+        return data.get("model"), metadata
+
+    save_json(settings, data)
+    sudo_uid = os.environ.get("SUDO_UID")
+    sudo_gid = os.environ.get("SUDO_GID")
+    if sudo_uid and sudo_gid:
+        os.chown(settings, int(sudo_uid), int(sudo_gid))
+    print(f"Set Claude Code defaults: model={data.get('model')}, effort=max")
+    return data.get("model"), metadata
+
+
+def migrate_saved_session_dynamic_model(user_home: Path, preferred_model: str | None) -> int:
+    """把旧 Opus 伪装会话迁移到真实 provider 默认模型，避免上下文能力继续按伪装模型计算。"""
+    if not preferred_model:
+        return 0
+    roots = [
+        user_home / "Library/Application Support/Claude-3p/claude-code-sessions",
+        user_home / "Library/Application Support/Claude-3p/local-agent-mode-sessions",
+    ]
+    changed = 0
+    for root in roots:
+        if not root.exists():
+            continue
+        for path in root.rglob("*.json"):
+            try:
+                data = load_json(path)
+            except Exception:
+                continue
+            dirty = False
+            if data.get("model") in {SAFE_OPUS_MODEL_ID, LEGACY_1M_OPUS_MODEL_ID}:
+                data["model"] = preferred_model
+                dirty = True
+            session_data = data.get("sessionData")
+            if isinstance(session_data, dict):
+                session_context = session_data.get("session_context")
+                if isinstance(session_context, dict) and session_context.get("model") in {
+                    SAFE_OPUS_MODEL_ID,
+                    LEGACY_1M_OPUS_MODEL_ID,
+                }:
+                    session_context["model"] = preferred_model
+                    dirty = True
+            if dirty:
+                save_json(path, data)
+                changed += 1
+    if changed:
+        print(f"Migrated saved Claude Code sessions from Opus alias to provider model {preferred_model}: {changed}")
+    return changed
+
+
+def find_claude_code_transcript(user_home: Path, cli_session_id: str) -> Path | None:
+    """根据 Claude Code session id 找到磁盘上的 jsonl 历史。"""
+    projects = user_home / ".claude/projects"
+    if not projects.exists():
+        return None
+    direct = list(projects.glob(f"*/{cli_session_id}.jsonl"))
+    if direct:
+        return direct[0]
+    try:
+        matches = run(
+            ["find", str(projects), "-type", "f", "-name", f"{cli_session_id}.jsonl"],
+            check=False,
+        ).stdout.splitlines()
+    except Exception:
+        return None
+    return Path(matches[0]) if matches else None
+
+
+def active_claude_code_sessions(user_home: Path) -> list[dict[str, Any]]:
+    roots = [
+        user_home / "Library/Application Support/Claude-3p/claude-code-sessions",
+        user_home / "Library/Application Support/Claude-3p/local-agent-mode-sessions",
+    ]
+    sessions: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for root in roots:
+        if not root.exists():
+            continue
+        for path in root.rglob("*.json"):
+            try:
+                data = load_json(path)
+            except Exception:
+                continue
+            cli_id = data.get("cliSessionId")
+            if not isinstance(cli_id, str) or not cli_id:
+                continue
+            if data.get("isArchived") is True:
+                continue
+            if cli_id in seen:
+                continue
+            seen.add(cli_id)
+            sessions.append({"metadata": path, "data": data, "cliSessionId": cli_id})
+    return sessions
+
+
+def shrink_session_value(value: Any, stats: dict[str, int]) -> Any:
+    """瘦身 Claude Code 历史中的大图、thinking 和超长工具结果，保留可读线索。"""
+    if isinstance(value, list):
+        new_items: list[Any] = []
+        for item in value:
+            if isinstance(item, dict) and item.get("type") == "thinking":
+                stats["thinking_removed"] = stats.get("thinking_removed", 0) + 1
+                continue
+            new_items.append(shrink_session_value(item, stats))
+        if not new_items and value:
+            return [{"type": "text", "text": "[历史思考内容已瘦身移除，以避免超过当前真实模型上下文上限。]"}]
+        return new_items
+
+    if isinstance(value, dict):
+        if value.get("isApiErrorMessage") is True:
+            stats["api_errors_compacted"] = stats.get("api_errors_compacted", 0) + 1
+            compacted = dict(value)
+            message = compacted.get("message")
+            if isinstance(message, dict):
+                message["content"] = [
+                    {
+                        "type": "text",
+                        "text": "[历史 API 错误已瘦身；原错误通常为超过当前真实模型上下文上限。]",
+                    }
+                ]
+                message["usage"] = {
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "cache_creation_input_tokens": 0,
+                    "cache_read_input_tokens": 0,
+                }
+            compacted["error"] = "compacted"
+            return compacted
+        if value.get("type") == "image" and isinstance(value.get("source"), dict):
+            source = value["source"]
+            if source.get("type") == "base64" and source.get("data"):
+                stats["images_removed"] = stats.get("images_removed", 0) + 1
+                return {"type": "text", "text": "[历史截图已瘦身移除，以避免超过当前真实模型上下文上限。]"}
+        result: dict[str, Any] = {}
+        for key, item in value.items():
+            if key == "signature" and isinstance(item, str) and len(item) > 256:
+                stats["signatures_removed"] = stats.get("signatures_removed", 0) + 1
+                continue
+            if key in {"base64", "data"} and isinstance(item, str) and len(item) > SESSION_LONG_FIELD_KEEP_CHARS:
+                stats["binary_fields_removed"] = stats.get("binary_fields_removed", 0) + 1
+                result[key] = "[历史二进制内容已瘦身移除，以避免超过当前真实模型上下文上限。]"
+                continue
+            if key in {"stdout", "stderr"} and isinstance(item, str) and len(item) > SESSION_LONG_FIELD_KEEP_CHARS:
+                stats["streams_truncated"] = stats.get("streams_truncated", 0) + 1
+                result[key] = item[:SESSION_LONG_FIELD_KEEP_CHARS] + "\n...[历史命令输出已截断]"
+                continue
+            if key == "snippet" and isinstance(item, str) and len(item) > SESSION_SNIPPET_KEEP_CHARS:
+                stats["snippets_truncated"] = stats.get("snippets_truncated", 0) + 1
+                result[key] = item[:SESSION_SNIPPET_KEEP_CHARS] + "\n...[历史代码片段已截断]"
+                continue
+            if key == "content" and isinstance(item, str) and len(item) > SESSION_TEXT_KEEP_CHARS:
+                stats["text_truncated"] = stats.get("text_truncated", 0) + 1
+                result[key] = item[:SESSION_TEXT_KEEP_CHARS] + "\n...[历史工具输出已截断]"
+                continue
+            result[key] = shrink_session_value(item, stats)
+        return result
+
+    return value
+
+
+def sanitize_transcript(path: Path, backup_dir: Path) -> tuple[bool, dict[str, int]]:
+    before_size = path.stat().st_size
+    stats: dict[str, int] = {"before_bytes": before_size}
+    lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    new_lines: list[str] = []
+    changed = False
+    for line in lines:
+        try:
+            obj = json.loads(line)
+        except Exception:
+            new_lines.append(line)
+            continue
+        shrunk = shrink_session_value(obj, stats)
+        new_line = json.dumps(shrunk, ensure_ascii=False, separators=(",", ":"))
+        if new_line != line:
+            changed = True
+        new_lines.append(new_line)
+
+    new_text = "\n".join(new_lines) + ("\n" if new_lines else "")
+    after_size = len(new_text.encode("utf-8"))
+    stats["after_bytes"] = after_size
+    if not changed or after_size >= before_size:
+        return False, stats
+
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    backup_path = backup_dir / path.name
+    shutil.copy2(path, backup_path)
+    path.write_text(new_text, encoding="utf-8")
+    stats["backup"] = str(backup_path)
+    return True, stats
+
+
+def sanitize_active_oversized_sessions(user_home: Path) -> tuple[int, list[dict[str, Any]]]:
+    """只瘦身已经出现 token-limit 错误的当前会话，不按固定模型窗口预判。"""
+    stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+    backup_dir = REPORT_DIR / "session-backups" / stamp
+    changed = 0
+    details: list[dict[str, Any]] = []
+    for session in active_claude_code_sessions(user_home):
+        cli_id = session["cliSessionId"]
+        transcript = find_claude_code_transcript(user_home, cli_id)
+        if transcript is None or not transcript.exists():
+            continue
+        size = transcript.stat().st_size
+        text = transcript.read_text(encoding="utf-8", errors="ignore")
+        token_limit_errors = [
+            {"limit": int(match.group("limit")), "requested": int(match.group("requested"))}
+            for match in TOKEN_LIMIT_ERROR_RE.finditer(text)
+        ]
+        detail: dict[str, Any] = {
+            "cliSessionId": cli_id,
+            "metadata": str(session["metadata"]),
+            "transcript": str(transcript),
+            "bytes": size,
+            "tokenLimitErrors": token_limit_errors[-5:],
+        }
+        if not token_limit_errors:
+            detail["status"] = "skipped_no_token_limit_error"
+            details.append(detail)
+            continue
+        ok, stats = sanitize_transcript(transcript, backup_dir)
+        detail.update(stats)
+        detail["status"] = "sanitized" if ok else "unchanged"
+        if ok:
+            changed += 1
+        details.append(detail)
+
+    if details:
+        report_path = REPORT_DIR / "session-sanitize-latest.json"
+        save_json(
+            report_path,
+            {
+                "trigger": "explicit_token_limit_error",
+                "note": "不使用固定上下文窗口；只在历史中已经出现模型 token limit 错误时瘦身。",
+                "sessions": details,
+            },
+        )
+    if changed:
+        print(f"Sanitized oversized active Claude Code sessions: {changed}")
+    return changed, details
+
+
 def clear_frontend_cache(user_home: Path, dry_run: bool) -> None:
     cache_names = ["Cache", "Code Cache", "GPUCache", "Service Worker", "DawnCache", "ShaderCache"]
     stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -2230,9 +3059,13 @@ def check_frontend_invariants(app: Path, report: PatchReport, *, require: bool =
                 and 'Kimi-k2.6' in text
             ),
             "cowork.default_opus": (
-                'z="opus[1m]","' in text
-                or 'z="opus[1m]",{allModelOptions:F}=R' in text
-                or 'return["opus[1m]",{...s,allModelOptions:[r,l]' in text
+                'z="opus","' in text
+                or 'z="opus",{allModelOptions:F}=R' in text
+                or 'return["opus",{...s,allModelOptions:[r,l]' in text
+            ),
+            "cowork.opus_alias_not_1m": (
+                'return["opus",{...s,allModelOptions:[r,l]' in text
+                and 'return["opus[1m]",{...s,allModelOptions:[r,l]' not in text
             ),
             "cowork.fallback_effort": (
                 'cowork_effort_level_cn")||"max"' in text
@@ -2258,6 +3091,12 @@ def check_frontend_invariants(app: Path, report: PatchReport, *, require: bool =
                     'setYukonSilverConfig?.({...w,effort:zhEffort' in text
                     or 'NT?.setYukonSilverConfig?.({...k,effort:_' in text
                 )
+            ),
+            "cowork.runtime_model_mapping": (
+                "zhCoworkRuntimeModel" in text
+                and "setModel(e,zhCoworkRuntimeModel)" in text
+                and "model:zhCoworkRuntimeModel" in text
+                and "session_context:{sources:[],...t.sessionModel&&{model:((e)=>" in text
             ),
             "cowork.kimi_health_hidden": (
                 (
@@ -2291,8 +3130,12 @@ def check_frontend_invariants(app: Path, report: PatchReport, *, require: bool =
                 and 'Kimi-k2.6' in text
             ),
             "code.default_opus": (
-                '})(H??"opus[1m]"),' in text
-                or '})(U??"opus[1m]"),' in text
+                '})(H??"opus"),' in text
+                or '})(U??"opus"),' in text
+            ),
+            "code.opus_alias_not_1m": (
+                'onSelect:()=>ue.current("opus")' in text
+                and 'onSelect:()=>ue.current("opus[1m]")' not in text
             ),
             "code.full_effort": (
                 (
@@ -2309,11 +3152,57 @@ def check_frontend_invariants(app: Path, report: PatchReport, *, require: bool =
                 ('const um="ccd-effort-level-cn"' in text or 'const zm="ccd-effort-level-cn"' in text)
                 and ('h=p??f??"max"' in text or 'ms=codeEffort??"max"' in text)
             ),
+            "code.runtime_model_mapping": (
+                "zhRuntimeModelFor=" in text
+                and "zhRuntimeModel=zhRuntimeModelFor(W)" in text
+                and "zhProviderModel=" in text
+            ),
+            "code.spawn_model_not_display_model": (
+                "model:zhRuntimeModel," in text
+                and "model:W," not in text
+                and "setModel?.(te.id,zhRuntimeModelFor(e))" in text
+            ),
         }
         for name, ok in checks.items():
             report.add(name, "passed" if ok else "missing", file=code, required=require)
         ok, message = check_js_syntax(code)
         report.add("syntax.code_bundle", "passed" if ok else "failed", message, file=code, required=require)
+
+    context_usage_file: Path | None = None
+    context_usage_ok = False
+    live_context_usage_ok = False
+    assets_dir_for_context = app / FRONTEND_ASSETS_REL
+    if assets_dir_for_context.exists():
+        for path in sorted(assets_dir_for_context.glob("*.js")):
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            if "rawMaxTokens" not in text:
+                continue
+            if "## Context Usage" in text:
+                context_usage_file = context_usage_file or path
+                context_usage_ok = (
+                    "n0=ege(s[2]),n=" in text
+                    and "rawMaxTokens:n" in text
+                    and "percentage:c" in text
+                )
+            if "contextUsage:n?{...n,rawMaxTokens:" in text and "N=b?Math.min(100,C??0):d.peak??0" in text:
+                context_usage_file = context_usage_file or path
+                live_context_usage_ok = True
+            if context_usage_ok and live_context_usage_ok:
+                break
+    report.add(
+        "code.context_usage_window_override",
+        "passed" if context_usage_ok else "missing",
+        "Context Usage 解析器必须用 provider 真实窗口覆盖文本分母并重算百分比",
+        file=context_usage_file,
+        required=require,
+    )
+    report.add(
+        "code.live_context_usage_window_override",
+        "passed" if live_context_usage_ok else "missing",
+        "Code 实时上下文窗口组件必须用 provider 真实窗口覆盖 rawMaxTokens",
+        file=context_usage_file,
+        required=require,
+    )
 
     assets_dir = app / FRONTEND_ASSETS_REL
     permission_files: list[Path] = []
@@ -2389,6 +3278,94 @@ def check_frontend_invariants(app: Path, report: PatchReport, *, require: bool =
     )
 
     return not report.has_required_failures()
+
+
+def check_runtime_invariants(user_home: Path, report: PatchReport, *, require: bool = False) -> None:
+    """检查用户态运行数据；这里只记录风险，不阻断安装。"""
+    preferred_model, model_metadata = preferred_gateway_model_id(user_home)
+    provider_context_window = context_window_from_metadata(model_metadata)
+    runtime_context_window, runtime_context_source = read_claude_code_context_window(user_home)
+    report.add(
+        "runtime.provider_default_model",
+        "passed" if preferred_model else "missing",
+        f"model={preferred_model or 'unavailable'}; source={model_metadata.get('source')}",
+        count=int(model_metadata.get("model_count", 0) or 0),
+        required=False,
+    )
+    report.add(
+        "runtime.provider_context_window",
+        "passed" if provider_context_window else "missing",
+        f"context_window={provider_context_window or 'unavailable'}; source={model_metadata.get('context_source') or model_metadata.get('source')}",
+        required=False,
+    )
+    report.add(
+        "runtime.claude_code_context_window",
+        "passed" if runtime_context_window and runtime_context_source.startswith("root_") else "missing",
+        f"context_window={runtime_context_window or 'unavailable'}; source={runtime_context_source}",
+        required=False,
+    )
+    report.add(
+        "runtime.context_window_root_configured",
+        "passed" if runtime_context_source.startswith("root_") else "missing",
+        f"source={runtime_context_source}",
+        required=False,
+    )
+    if provider_context_window and runtime_context_window:
+        matched = provider_context_window == runtime_context_window and runtime_context_source.startswith("root_")
+        report.add(
+            "runtime.context_window_match",
+            "passed" if matched else "missing",
+            f"provider={provider_context_window}; runtime={runtime_context_window}; source={runtime_context_source}",
+            required=False,
+        )
+    else:
+        report.add(
+            "runtime.context_window_match",
+            "missing",
+            f"provider={provider_context_window or 'unavailable'}; runtime={runtime_context_window or 'unavailable'}",
+            required=False,
+        )
+    active_processes = active_claude_code_processes(user_home)
+    active_models = [item["model"] for item in active_processes if item.get("model")]
+    bad_models = [
+        f"{item['pid']}:{item['model']}"
+        for item in active_processes
+        if item.get("model", "").lower() in {SAFE_OPUS_MODEL_ID, LEGACY_1M_OPUS_MODEL_ID}
+    ]
+    report.add(
+        "runtime.active_cli_model",
+        "passed" if not bad_models else "missing",
+        (
+            "active_models=" + ",".join(active_models[:8])
+            if active_models and not bad_models
+            else "bad=" + ",".join(bad_models[:8])
+            if bad_models
+            else "active=0"
+        ),
+        count=len(active_processes),
+        required=require,
+    )
+    active = active_claude_code_sessions(user_home)
+    token_errors: list[str] = []
+    for session in active:
+        transcript = find_claude_code_transcript(user_home, session["cliSessionId"])
+        if not transcript or not transcript.exists():
+            continue
+        text = transcript.read_text(encoding="utf-8", errors="ignore")
+        match = None
+        for match in TOKEN_LIMIT_ERROR_RE.finditer(text):
+            pass
+        if match:
+            token_errors.append(
+                f"{session['cliSessionId']}:limit={match.group('limit')},requested={match.group('requested')}"
+            )
+    report.add(
+        "runtime.active_sessions_token_limit_errors",
+        "passed" if not token_errors else "missing",
+        "errors=" + ",".join(token_errors[:5]) if token_errors else f"active={len(active)}",
+        count=len(token_errors),
+        required=require,
+    )
 
 
 def print_report_summary(report: PatchReport) -> None:
@@ -2524,6 +3501,7 @@ def main() -> int:
     if args.diagnose:
         report = PatchReport(str(args.app), get_claude_version(args.app), "diagnose")
         check_frontend_invariants(args.app, report, require=True)
+        check_runtime_invariants(args.user_home, report, require=False)
         write_patch_report(report)
         print_report_summary(report)
         return 1 if report.has_required_failures() else 0
@@ -2534,6 +3512,13 @@ def main() -> int:
             print("[dry-run] Claude will not be quit.")
         else:
             quit_claude()
+            terminated = terminate_claude_code_children(args.user_home, args.dry_run)
+            report.add(
+                "runtime.claude_code_children_terminated",
+                "applied" if terminated else "passed",
+                f"terminated={terminated}",
+                required=False,
+            )
         target = prepare_official_update(args.app, args.user_home, args.dry_run)
         report.add(
             "official_update.prepare_overwrite",
@@ -2562,12 +3547,21 @@ def main() -> int:
         print("[dry-run] Claude will not be quit.")
     else:
         quit_claude()
+        terminated = terminate_claude_code_children(args.user_home, args.dry_run)
+        report.add(
+            "runtime.claude_code_children_terminated",
+            "applied" if terminated else "passed",
+            f"terminated={terminated}",
+            required=False,
+        )
+    preferred_model, model_metadata = preferred_gateway_model_id(args.user_home)
+    provider_context_window = context_window_from_metadata(model_metadata)
     tmp_root = Path(tempfile.mkdtemp(prefix="claude-zh-cn-patch."))
     patched_app = tmp_root / "Claude.app"
 
     copy_app(args.app, patched_app)
     patch_language_whitelist(patched_app)
-    patch_hardcoded_frontend_strings(patched_app)
+    patch_hardcoded_frontend_strings(patched_app, provider_context_window, preferred_model)
     model_validation_patched = patch_custom3p_model_validation(patched_app)
     report.add(
         "asar.custom3p_validation.patch",
@@ -2584,6 +3578,60 @@ def main() -> int:
         print(f"[dry-run] Would set Claude config locale under: {args.user_home}")
     else:
         set_user_locale(args.user_home)
+        preferred_model, model_metadata = set_claude_code_dynamic_defaults(args.user_home)
+        report.add(
+            "runtime.provider_default_model",
+            "passed" if preferred_model else "missing",
+            f"model={preferred_model or 'unavailable'}; source={model_metadata.get('source')}",
+            count=int(model_metadata.get("model_count", 0) or 0),
+            required=False,
+        )
+        provider_context_window = context_window_from_metadata(model_metadata)
+        runtime_context_window, runtime_context_source, context_changed = sync_claude_code_context_window(
+            args.user_home, provider_context_window
+        )
+        report.add(
+            "runtime.provider_context_window",
+            "passed" if provider_context_window else "missing",
+            f"context_window={provider_context_window or 'unavailable'}; source={model_metadata.get('context_source') or model_metadata.get('source')}",
+            required=False,
+        )
+        report.add(
+            "runtime.claude_code_context_window",
+            "applied" if context_changed else ("passed" if runtime_context_window else "missing"),
+            f"context_window={runtime_context_window or 'unavailable'}; source={runtime_context_source}",
+            required=False,
+        )
+        report.add(
+            "runtime.context_window_root_configured",
+            "passed" if runtime_context_source.startswith("root_") else "missing",
+            f"source={runtime_context_source}",
+            required=False,
+        )
+        report.add(
+            "runtime.context_window_match",
+            "passed"
+            if provider_context_window
+            and runtime_context_window == provider_context_window
+            and runtime_context_source.startswith("root_")
+            else "missing",
+            f"provider={provider_context_window or 'unavailable'}; runtime={runtime_context_window or 'unavailable'}; source={runtime_context_source}",
+            required=False,
+        )
+        migrated_sessions = migrate_saved_session_dynamic_model(args.user_home, preferred_model)
+        report.add(
+            "runtime.saved_session_dynamic_model",
+            "applied" if migrated_sessions else "passed",
+            f"migrated={migrated_sessions}",
+            required=False,
+        )
+        sanitized_sessions, sanitize_details = sanitize_active_oversized_sessions(args.user_home)
+        report.add(
+            "runtime.oversized_session_sanitize",
+            "applied" if sanitized_sessions else "passed",
+            f"sanitized={sanitized_sessions}; checked={len(sanitize_details)}",
+            required=False,
+        )
         clear_frontend_cache(args.user_home, args.dry_run)
     verify(patched_app)
     if not check_frontend_invariants(patched_app, report, require=True):
