@@ -83,7 +83,7 @@ Logs/patch-report-YYYYMMDD-HHMMSS.json
 - 已适配 Claude Desktop `1.6608.2` 与 `1.7196.0` 的共享模型选择器和第三方模型校验开关；后续版本如再次变动，优先看 `Logs/latest.json` 的失败项。
 - `api.kimi.com` 健康横幅补丁只隐藏旧健康检查误报，不保证第三方网关真实请求一定成功；真实请求仍由网关配置、网络和上游模型决定。
 - 如果 Code 已打开很久并反复发送截图/大文件，可能不是模型配置错，而是旧会话历史超过当前真实模型上下文。重新运行 `install.command` 后，脚本会同步真实上下文窗口，只会处理已经出现 token limit 错误的当前未归档会话，并在 `Logs/session-sanitize-latest.json` 记录真实 limit/requested 数值。
-- 出现异常时先运行 `--diagnose`，把项目根目录里的 `Logs/` 发回来，比截图更容易定位是哪一个补丁点失效。`runtime.active_cli_model` 会检查当前 Claude Code 子进程是否仍带着旧的 `--model opus` / `--model opus[1m]`；`runtime.context_window_root_configured` 会检查 `.claude.json` 顶层运行时窗口是否已经写入真实 provider 上限。
+- 出现异常时先运行 `--diagnose`，把项目根目录里的 `Logs/` 发回来，比截图更容易定位是哪一个补丁点失效。`runtime.active_cli_model` 会检查当前 Claude Code 子进程是否仍带着旧的 `--model opus` / `--model opus[1m]`；`runtime.provider_default_ignores_opus_alias` 会检查真实 provider 默认模型是否跳过了 `opus` / `opus[1m]` / `Opus 4.71M` 这些显示别名；`runtime.context_window_root_configured` 会检查 `.claude.json` 顶层运行时窗口是否已经写入真实 provider 上限。
 
 ## 复制到其他电脑使用
 
@@ -223,7 +223,7 @@ Claude Desktop `1.7196.0` 起，旧版补丁点 `Jbt` / `um="ccd-effort-level"` 
 
 普通默认对话里的旧 `kimi-for-coding` 默认值会归一为 `opus`，避免模型按钮变成空白。Code 页面里直接选择 `Kimi-k2.6` 时，会写入真实 Kimi id，不再把显示名 `Kimi-k2.6` 当作请求模型名。
 
-注意：这只解决 Claude Desktop 前端识别问题。上下文容量不能靠补丁猜测；如果网关返回的是 200K、256K 或 1M，就按真实模型处理。安装脚本会把该值同步到 `.claude.json` 顶层的 Claude Code 运行时窗口，并在 `Logs/latest.json` 里记录 `runtime.provider_context_window`、`runtime.claude_code_context_window`、`runtime.context_window_root_configured` 和 `runtime.context_window_match`。只有 `cachedGrowthBookFeatures.tengu_hawthorn_window` 不算通过，因为旧版 Claude Code 子进程可能不会读取它。手动强行使用 `opus[1m]` 仍可能让客户端按错误窗口组织上下文，最终被上游拒绝。
+注意：这只解决 Claude Desktop 前端识别问题。上下文容量不能靠补丁猜测；如果网关返回的是 200K、256K 或 1M，就按真实模型处理。安装脚本会把该值同步到 `.claude.json` 顶层的 Claude Code 运行时窗口，并在 `Logs/latest.json` 里记录 `runtime.provider_default_ignores_opus_alias`、`runtime.provider_context_window`、`runtime.claude_code_context_window`、`runtime.context_window_root_configured` 和 `runtime.context_window_match`。只有 `cachedGrowthBookFeatures.tengu_hawthorn_window` 不算通过，因为旧版 Claude Code 子进程可能不会读取它。手动强行使用 `opus[1m]` 仍可能让客户端按错误窗口组织上下文，最终被上游拒绝。
 
 如果已经打开过旧会话，旧会话文件里可能保存了 `model: "opus"` 或 `model: "opus[1m]"`。安装脚本会在能发现真实 provider 默认模型时，把这些已保存会话迁移到真实模型 id，并在安装时终止旧的 Claude Code / disclaimer 子进程；否则正在运行的旧子进程仍可能按 Opus 伪装窗口继续组织上下文。
 
@@ -248,6 +248,7 @@ code.context_usage_window_override
 code.live_context_usage_window_override
 runtime.context_window_root_configured
 runtime.context_window_match
+runtime.provider_default_ignores_opus_alias
 ```
 
 比如真实上限是 `262144` 时，`252.9k` 会显示约 `252.9k / 262.1k (96.5%)`；如果将来 provider 返回 1M，重新运行 `install.command` 后会自动同步为 1M，不需要改脚本常量。如果确实超过上限，则显示真实超限比例，而不是固定 `100%`。

@@ -280,7 +280,7 @@ Logs/patch-report-YYYYMMDD-HHMMSS.json
 
 `Logs/` 固定在项目根目录，也就是 `install.command` 同级。这样把项目复制到其他电脑后，异常机器生成的日志也在同一个文件夹里，方便直接打包发回。脚本通过 sudo 运行时，会把 `Logs/` 及生成的 JSON 文件 owner 改回当前用户，避免日志文件变成 root-owned。
 
-日志中的每个补丁点会记录 `passed`、`applied`、`already_patched`、`missing` 或 `failed`，并带上目标 bundle 文件名和 Claude 版本。`i18n.known_missing_strings` 会检查已经记录过的易漏英文文案 key，发现缺失、仍等于 en-US 原文或不含中文字符时会进入 `required_failures`。`i18n.developer_menu_labels` 会检查开发者模式下主进程菜单的额外调试项是否仍是英文。`i18n.custom3p_setup_labels` 会检查“配置第三方推理”窗口的 asar 与前端 bundle 文案是否仍有已记录的英文残留。上下文窗口相关日志必须同时覆盖 `code.context_usage_window_override`、`code.live_context_usage_window_override`、`runtime.provider_context_window`、`runtime.claude_code_context_window`、`runtime.context_window_root_configured` 和 `runtime.context_window_match`，用来区分“只改了显示”“只写了 GrowthBook 缓存”和“真实运行时窗口已经同步”。日志还会记录 provider 默认模型发现来源和当前未归档 Claude Code 会话里的 token-limit 错误，但不记录 API Key、token 或完整对话内容。
+日志中的每个补丁点会记录 `passed`、`applied`、`already_patched`、`missing` 或 `failed`，并带上目标 bundle 文件名和 Claude 版本。`i18n.known_missing_strings` 会检查已经记录过的易漏英文文案 key，发现缺失、仍等于 en-US 原文或不含中文字符时会进入 `required_failures`。`i18n.developer_menu_labels` 会检查开发者模式下主进程菜单的额外调试项是否仍是英文。`i18n.custom3p_setup_labels` 会检查“配置第三方推理”窗口的 asar 与前端 bundle 文案是否仍有已记录的英文残留。上下文窗口相关日志必须同时覆盖 `code.context_usage_window_override`、`code.live_context_usage_window_override`、`runtime.provider_default_ignores_opus_alias`、`runtime.provider_context_window`、`runtime.claude_code_context_window`、`runtime.context_window_root_configured` 和 `runtime.context_window_match`，用来区分“只改了显示”“只写了 GrowthBook 缓存”“把 Opus 显示别名误当 provider 默认模型”和“真实运行时窗口已经同步”。日志还会记录 provider 默认模型发现来源和当前未归档 Claude Code 会话里的 token-limit 错误，但不记录 API Key、token 或完整对话内容。
 
 运行时 token-limit 错误检查的事件名是：
 
@@ -525,7 +525,7 @@ RESOURCES = ROOT / "resources"
 
 安装脚本还会迁移 `~/Library/Application Support/Claude-3p/claude-code-sessions` 和 `local-agent-mode-sessions` 中已保存的旧会话：如果能发现真实 provider 默认模型，就把顶层 `model` 或 `session_context.model` 从 `opus` / `opus[1m]` 改成真实模型 id。这是为了避免用户恢复旧任务时，Claude Code 子进程继续按 Opus 伪装窗口组织上下文。安装时会同时退出 Claude 并终止遗留的 Claude Code / disclaimer 子进程，`--diagnose` 会通过 `runtime.active_cli_model` 报告当前是否仍有 `--model opus` 或 `--model opus[1m]`。
 
-同一阶段会读取 provider 模型元数据中的 `context_length`、`contextWindow`、`max_input_tokens` 等字段，并同步到 `.claude.json` 顶层的 `tengu_hawthorn_window`。只写 `cachedGrowthBookFeatures.tengu_hawthorn_window` 不够，因为旧 Claude Code 子进程可能不会把它当作运行时窗口；诊断项 `runtime.context_window_root_configured` 专门防止这种假通过。
+同一阶段会读取 provider 模型元数据中的 `context_length`、`contextWindow`、`max_input_tokens` 等字段，并同步到 `.claude.json` 顶层的 `tengu_hawthorn_window`。选择 provider 默认模型时必须跳过 `opus` / `opus[1m]` / `Opus 4.71M` 这类显示别名；如果另一台电脑的手动模型列表把 Opus 放在第一项，`runtime.provider_default_ignores_opus_alias` 会记录被跳过的别名数量，并继续寻找真实第三方模型。只写 `cachedGrowthBookFeatures.tengu_hawthorn_window` 不够，因为旧 Claude Code 子进程可能不会把它当作运行时窗口；诊断项 `runtime.context_window_root_configured` 专门防止这种假通过。
 
 这个值也会在安装时注入 Code 前端的两条显示路径：一条是历史消息里的 `## Context Usage` 文本解析逻辑，另一条是底部实时上下文弹窗的 `contextUsage.rawMaxTokens`。`--diagnose` 会记录 `code.context_usage_window_override`、`code.live_context_usage_window_override`、`runtime.provider_context_window`、`runtime.claude_code_context_window` 和 `runtime.context_window_match`：如果 provider 已经是 262144 或 1M，而 Claude Code 仍是 200000，或者实时弹窗仍显示 1.0M/200.0k，日志会直接指出不一致。
 

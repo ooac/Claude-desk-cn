@@ -2628,39 +2628,92 @@ def model_matches_id(model: dict[str, Any], model_id: str) -> bool:
     return False
 
 
+def is_opus_display_alias(model_id: str | None) -> bool:
+    """只识别本补丁注入的 Opus 显示别名；真实 provider 模型不能从这些值推断。"""
+    if not isinstance(model_id, str):
+        return False
+    normalized = re.sub(r"[\s_-]+", "", model_id.strip().lower())
+    return normalized in {
+        "opus",
+        "opus[1m]",
+        "opus4.71m",
+        "opus4.7m",
+        "opus4.71m默认",
+        "opus4.7m默认",
+    }
+
+
+def context_window_from_gateway_models(
+    gateway_models: list[dict[str, Any]],
+    *,
+    preferred_id: str | None = None,
+) -> tuple[int | None, str | None]:
+    """从真实 provider 模型里取上下文窗口，跳过 Opus 显示别名。"""
+    candidates: list[dict[str, Any]] = []
+    if preferred_id:
+        candidates.extend(model for model in gateway_models if model_matches_id(model, preferred_id))
+    candidates.extend(gateway_models)
+    for model in candidates:
+        model_id = model_id_from_gateway_model(model)
+        if is_opus_display_alias(model_id):
+            continue
+        context_window, context_key = context_window_from_model(model)
+        if context_window:
+            prefix = "gateway_/v1/models"
+            if preferred_id and model_matches_id(model, preferred_id):
+                prefix += ".matched"
+            else:
+                prefix += ".first_real_model"
+            return context_window, f"{prefix}.{context_key}"
+    return None, None
+
+
 def preferred_gateway_model_id(user_home: Path) -> tuple[str | None, dict[str, Any]]:
     """返回真实 provider 默认模型 id；不返回 Opus 伪装名。"""
-    configured = configured_model_list(user_home)
+    configured_all = configured_model_list(user_home)
+    ignored_opus_aliases = [model for model in configured_all if is_opus_display_alias(model)]
+    configured = [model for model in configured_all if not is_opus_display_alias(model)]
     gateway_models = fetch_gateway_models(user_home)
     if configured:
         metadata: dict[str, Any] = {
             "source": "configured_model_list",
             "model_count": len(configured),
+            "configured_model_count": len(configured_all),
             "gateway_model_count": len(gateway_models),
+            "ignored_opus_alias_count": len(ignored_opus_aliases),
         }
-        for model in gateway_models:
-            if not model_matches_id(model, configured[0]):
-                continue
-            context_window, context_key = context_window_from_model(model)
-            if context_window:
-                metadata["context_window"] = context_window
-                metadata["context_source"] = f"gateway_/v1/models.{context_key}"
-            break
+        context_window, context_source = context_window_from_gateway_models(
+            gateway_models,
+            preferred_id=configured[0],
+        )
+        if context_window:
+            metadata["context_window"] = context_window
+            metadata["context_source"] = context_source
         return configured[0], metadata
 
     for model in gateway_models:
         model_id = model_id_from_gateway_model(model)
-        if model_id:
-            context_window, context_key = context_window_from_model(model)
+        if model_id and not is_opus_display_alias(model_id):
+            context_window, context_source = context_window_from_gateway_models(
+                gateway_models,
+                preferred_id=model_id,
+            )
             metadata = {
                 "source": "gateway_/v1/models",
                 "model_count": len(gateway_models),
+                "configured_model_count": len(configured_all),
+                "ignored_opus_alias_count": len(ignored_opus_aliases),
             }
             if context_window:
                 metadata["context_window"] = context_window
-                metadata["context_source"] = f"gateway_/v1/models.{context_key}"
+                metadata["context_source"] = context_source
             return model_id, metadata
-    return None, {"source": "unavailable", "model_count": 0}
+    return None, {
+        "source": "unavailable",
+        "model_count": 0,
+        "configured_model_count": len(configured_all),
+        "ignored_opus_alias_count": len(ignored_opus_aliases),
+    }
 
 
 def context_window_from_metadata(metadata: dict[str, Any]) -> int | None:
@@ -3293,6 +3346,16 @@ def check_runtime_invariants(user_home: Path, report: PatchReport, *, require: b
         required=False,
     )
     report.add(
+        "runtime.provider_default_ignores_opus_alias",
+        "passed" if preferred_model and not is_opus_display_alias(preferred_model) else "missing",
+        (
+            f"model={preferred_model or 'unavailable'}; "
+            f"ignored_opus_alias_count={model_metadata.get('ignored_opus_alias_count', 0)}; "
+            f"configured_model_count={model_metadata.get('configured_model_count', 0)}"
+        ),
+        required=False,
+    )
+    report.add(
         "runtime.provider_context_window",
         "passed" if provider_context_window else "missing",
         f"context_window={provider_context_window or 'unavailable'}; source={model_metadata.get('context_source') or model_metadata.get('source')}",
@@ -3584,6 +3647,16 @@ def main() -> int:
             "passed" if preferred_model else "missing",
             f"model={preferred_model or 'unavailable'}; source={model_metadata.get('source')}",
             count=int(model_metadata.get("model_count", 0) or 0),
+            required=False,
+        )
+        report.add(
+            "runtime.provider_default_ignores_opus_alias",
+            "passed" if preferred_model and not is_opus_display_alias(preferred_model) else "missing",
+            (
+                f"model={preferred_model or 'unavailable'}; "
+                f"ignored_opus_alias_count={model_metadata.get('ignored_opus_alias_count', 0)}; "
+                f"configured_model_count={model_metadata.get('configured_model_count', 0)}"
+            ),
             required=False,
         )
         provider_context_window = context_window_from_metadata(model_metadata)
