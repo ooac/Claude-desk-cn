@@ -96,7 +96,9 @@ repair_code_runtime.command
 - Claude Desktop 每次更新后都要重新运行补丁；如果新版 bundle 结构变化，安装会因 invariant 失败而中止，不会覆盖成半残 app。
 - 已适配 Claude Desktop `1.6608.2` 与 `1.7196.0` 的共享模型选择器和第三方模型校验开关；后续版本如再次变动，优先看 `Logs/latest.json` 的失败项。
 - `api.kimi.com` 健康横幅补丁只隐藏旧健康检查误报，不保证第三方网关真实请求一定成功；真实请求仍由网关配置、网络和上游模型决定。
-- 如果 Cowork 能发消息但 Code 报 `401 API Key invalid`，优先运行 `repair_code_runtime.command`。这类问题通常不是前端菜单补丁失效，而是 Code CLI 使用的 `~/.claude/settings.json > env` 没有同步到当前第三方推理配置。诊断日志里的 `runtime.claude_code_gateway_env` 会检查 `ANTHROPIC_BASE_URL` 和 `ANTHROPIC_AUTH_TOKEN` 是否与当前网关配置一致，日志不会记录密钥。
+- 如果 Cowork 能发消息但 Code 报 `401 API Key invalid`，优先运行 `repair_code_runtime.command`。这类问题通常不是前端菜单补丁失效，而是 Code CLI 使用的 `~/.claude/settings.json > env` 没有同步到当前第三方推理配置。诊断日志里的 `runtime.claude_code_gateway_env` 会检查 `ANTHROPIC_BASE_URL`、`ANTHROPIC_AUTH_TOKEN` 和 `ANTHROPIC_API_KEY` 是否与当前网关配置一致，日志不会记录密钥。
+- `runtime.gateway_auth_check` 只探测 `/v1/models`；`runtime.gateway_messages_auth_check` 会用极小的 `/v1/messages` 请求探测真实发消息接口。如果前者通过、后者 401/403，说明模型列表可读但推理接口拒绝当前 Key，需要在“配置第三方推理”里重新保存 API Key 或检查上游 Key 权限。
+- 如果某个文件夹里的 Code 会话 401，但另一个文件夹同一个插件能运行，优先看 `runtime.active_project_env_overrides`。它会扫描未归档 Code 会话的项目目录，检查 `.claude/settings*.json`、`.env*` 是否覆盖了 `ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_API_KEY` / 认证类 `ANTHROPIC_CUSTOM_HEADERS`。日志只记录文件路径和 mismatch 类型，不记录密钥。
 - 如果 Code 已打开很久并反复发送截图/大文件，可能不是模型配置错，而是旧会话历史超过当前真实模型上下文。重新运行 `install.command` 后，脚本会同步真实上下文窗口，只会处理已经出现 token limit 错误的当前未归档会话，并在 `Logs/session-sanitize-latest.json` 记录真实 limit/requested 数值。
 - 出现异常时先运行 `--diagnose`，把项目根目录里的 `Logs/` 发回来，比截图更容易定位是哪一个补丁点失效。`runtime.gateway_auth_check` 会记录 `/v1/models` 探测是否遇到 `401` / `403` 等认证错误，但不会记录 API Key；`runtime.claude_code_gateway_env` 会检查 Code CLI 鉴权环境是否已同步；`runtime.active_cli_model` 会检查当前 Claude Code 子进程是否仍带着旧的 `--model opus` / `--model opus[1m]`；`runtime.provider_default_ignores_opus_alias` 会检查真实 provider 默认模型是否跳过了 `opus` / `opus[1m]` / `Opus 4.71M` 这些显示别名；`runtime.context_window_root_configured` 会检查 `.claude.json` 顶层运行时窗口是否已经写入真实 provider 上限。
 

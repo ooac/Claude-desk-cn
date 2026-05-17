@@ -294,7 +294,11 @@ Logs/patch-report-YYYYMMDD-HHMMSS.json
 
 `runtime.gateway_auth_check` 只记录 `/v1/models` 探测的 HTTP 状态、网关 endpoint 和错误原因，不记录 API Key。其他电脑出现 `401 The API Key appears to be invalid or may have expired` 时，这个事件应为 `missing`，message 里会包含 `status=401`，用于区分“补丁没命中”和“该电脑凭据不可用”。
 
-`runtime.claude_code_gateway_env` 不记录 API Key，只记录 `base_url_match`、`auth_token_present` 和 `auth_token_matches_gateway`。如果 `runtime.gateway_auth_check=passed` 但 `runtime.claude_code_gateway_env=missing`，说明桌面端第三方推理配置可以探测模型，但 Claude Code CLI 没有拿到同一套 `ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN`；这正是“Cowork 能用、Code 401”的典型根因，运行 `repair_code_runtime.command` 即可修复。
+`runtime.claude_code_gateway_env` 不记录 API Key，只记录 `base_url_match`、`auth_token_present`、`auth_token_matches_gateway`、`api_key_present` 和 `api_key_matches_gateway`。如果 `runtime.gateway_auth_check=passed` 但 `runtime.claude_code_gateway_env=missing`，说明桌面端第三方推理配置可以探测模型，但 Claude Code CLI 没有拿到同一套 `ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_API_KEY`；这正是“Cowork 能用、Code 401”的典型根因，运行 `repair_code_runtime.command` 即可修复。
+
+`runtime.gateway_messages_auth_check` 会额外用极小 `/v1/messages` 请求验证真实推理接口。`runtime.gateway_auth_check` 只代表 `/v1/models` 可读；如果模型探测通过但消息接口返回 401/403，说明当前 Key 对推理接口无效或已过期，需要重新保存第三方推理 API Key 或检查上游权限。
+
+如果“同一个插件在 A 文件夹可用、B 文件夹 401”，不能只看全局 `~/.claude/settings.json`。`runtime.active_project_env_overrides` 会扫描未归档 Code 会话的项目 `cwd`，检查项目内 `.claude/settings*.json` 和 `.env*` 是否覆盖了 `ANTHROPIC_BASE_URL`、`ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_API_KEY` 或认证类 `ANTHROPIC_CUSTOM_HEADERS`。日志只记录文件路径和 mismatch 类型，不记录密钥，用来快速定位项目级旧 Key 或旧网关覆盖。
 
 运行时 token-limit 错误检查的事件名是：
 

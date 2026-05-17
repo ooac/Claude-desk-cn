@@ -68,6 +68,12 @@ TOKEN_LIMIT_ERROR_RE = re.compile(
     r"exceeded model token limit:\s*(?P<limit>\d+)\s*\(requested:\s*(?P<requested>\d+)\)",
     re.IGNORECASE,
 )
+PROJECT_ENV_OVERRIDE_KEYS = {
+    "ANTHROPIC_BASE_URL",
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_CUSTOM_HEADERS",
+}
 SESSION_TEXT_KEEP_CHARS = 12_000
 SESSION_SNIPPET_KEEP_CHARS = 4_000
 SESSION_LONG_FIELD_KEEP_CHARS = 1_000
@@ -2812,6 +2818,57 @@ def gateway_probe_message(metadata: dict[str, Any]) -> tuple[str, str]:
     return "missing", f"status={status}; endpoint={endpoint}; reason={reason}; api_key_not_logged=true"
 
 
+def gateway_messages_auth_probe(user_home: Path, model: str | None, timeout: float = 8.0) -> tuple[str, str]:
+    """用极小 /v1/messages 请求验证消息接口鉴权；不记录密钥和请求内容。"""
+    if not model:
+        return "missing", "model=missing"
+    config = active_gateway_config(user_home)
+    if not config:
+        return "missing", "gateway_config=missing"
+    base_url = str(config.get("base_url") or "").rstrip("/")
+    endpoint = safe_gateway_endpoint_for_log(base_url)
+    api_key = config.get("api_key")
+    if not base_url:
+        return "missing", "gateway_base_url=missing"
+    if not isinstance(api_key, str) or not api_key.strip():
+        return "missing", f"endpoint={endpoint}; static_api_key=missing"
+    payload = json.dumps(
+        {
+            "model": model,
+            "max_tokens": 1,
+            "messages": [{"role": "user", "content": "ping"}],
+        }
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        base_url + "/v1/messages",
+        data=payload,
+        headers={
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key.strip()}",
+            "anthropic-version": "2023-06-01",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            status = response.getcode()
+            response.read(1024)
+        return "passed", f"status={status}; endpoint={endpoint}; model={model}; api_key_not_logged=true"
+    except urllib.error.HTTPError as exc:
+        auth_failed = exc.code in {401, 403}
+        return (
+            "missing" if auth_failed else "passed",
+            f"status={exc.code}; endpoint={endpoint}; model={model}; reason={exc.reason}; api_key_not_logged=true",
+        )
+    except urllib.error.URLError as exc:
+        return "missing", f"status=url_error; endpoint={endpoint}; reason={exc.reason}; api_key_not_logged=true"
+    except TimeoutError:
+        return "missing", f"status=timeout; endpoint={endpoint}; api_key_not_logged=true"
+    except OSError as exc:
+        return "missing", f"status=os_error; endpoint={endpoint}; reason={exc.__class__.__name__}; api_key_not_logged=true"
+
+
 def normalize_gateway_base_url(base_url: Any) -> str | None:
     if not isinstance(base_url, str) or not base_url.strip():
         return None
@@ -2843,24 +2900,33 @@ def claude_code_gateway_env_status(user_home: Path) -> tuple[str, str]:
         return "missing", "env=missing"
     current_base = normalize_gateway_base_url(env.get("ANTHROPIC_BASE_URL"))
     token = env.get("ANTHROPIC_AUTH_TOKEN")
+    api_key_env = env.get("ANTHROPIC_API_KEY")
     base_match = bool(base_url and current_base == base_url)
     token_present = isinstance(token, str) and bool(token.strip())
+    api_key_present = isinstance(api_key_env, str) and bool(api_key_env.strip())
     token_match = isinstance(api_key, str) and isinstance(token, str) and token.strip() == api_key.strip()
+    api_key_match = (
+        isinstance(api_key, str) and isinstance(api_key_env, str) and api_key_env.strip() == api_key.strip()
+    )
     helper = gateway.get("credential_helper")
     helper_configured = isinstance(helper, str) and bool(helper.strip())
-    if base_match and (token_match or helper_configured):
+    if base_match and ((token_match and api_key_match) or helper_configured):
         return (
             "passed",
             (
                 f"base_url_match=true; auth_token_present={str(token_present).lower()}; "
-                f"auth_token_matches_gateway={str(token_match).lower()}; helper_configured={str(helper_configured).lower()}"
+                f"auth_token_matches_gateway={str(token_match).lower()}; "
+                f"api_key_present={str(api_key_present).lower()}; api_key_matches_gateway={str(api_key_match).lower()}; "
+                f"helper_configured={str(helper_configured).lower()}"
             ),
         )
     return (
         "missing",
         (
             f"base_url_match={str(base_match).lower()}; auth_token_present={str(token_present).lower()}; "
-            f"auth_token_matches_gateway={str(token_match).lower()}; helper_configured={str(helper_configured).lower()}"
+            f"auth_token_matches_gateway={str(token_match).lower()}; "
+            f"api_key_present={str(api_key_present).lower()}; api_key_matches_gateway={str(api_key_match).lower()}; "
+            f"helper_configured={str(helper_configured).lower()}"
         ),
     )
 
@@ -2899,6 +2965,7 @@ def sync_claude_code_gateway_env(user_home: Path) -> tuple[bool, str, str]:
     desired = {
         "ANTHROPIC_BASE_URL": base_url,
         "ANTHROPIC_AUTH_TOKEN": api_key.strip(),
+        "ANTHROPIC_API_KEY": api_key.strip(),
         "CLAUDE_CODE_DISABLE_TERMINAL_TITLE": "1",
         "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
         "CLAUDE_CODE_ATTRIBUTION_HEADER": "0",
@@ -3113,6 +3180,125 @@ def active_claude_code_sessions(user_home: Path) -> list[dict[str, Any]]:
             seen.add(cli_id)
             sessions.append({"metadata": path, "data": data, "cliSessionId": cli_id})
     return sessions
+
+
+def parse_env_assignments(path: Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    try:
+        lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    except Exception:
+        return values
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export ") :].strip()
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if key not in PROJECT_ENV_OVERRIDE_KEYS:
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        values[key] = value
+    return values
+
+
+def collect_project_env_candidates(cwd: Path) -> list[Path]:
+    candidates: list[Path] = []
+    claude_dir = cwd / ".claude"
+    for name in ["settings.json", "settings.local.json"]:
+        path = claude_dir / name
+        if path.exists():
+            candidates.append(path)
+    if claude_dir.exists():
+        candidates.extend(
+            path
+            for path in sorted(claude_dir.glob("settings.*.json"))
+            if path not in candidates and path.is_file()
+        )
+    for name in [".env", ".env.local", ".env.development", ".env.production"]:
+        path = cwd / name
+        if path.exists():
+            candidates.append(path)
+    candidates.extend(
+        path for path in sorted(cwd.glob(".env.*")) if path not in candidates and path.is_file()
+    )
+    return candidates
+
+
+def project_env_values_from_file(path: Path) -> dict[str, str]:
+    if path.name.endswith(".json"):
+        try:
+            data = load_json(path)
+        except Exception:
+            return {"__unreadable__": "1"}
+        env = data.get("env") if isinstance(data, dict) else None
+        if not isinstance(env, dict):
+            return {}
+        return {key: str(value) for key, value in env.items() if key in PROJECT_ENV_OVERRIDE_KEYS}
+    return parse_env_assignments(path)
+
+
+def project_env_override_status(user_home: Path) -> tuple[str, str, int]:
+    """检查未归档 Code 会话的项目目录是否用项目级配置覆盖了网关认证环境。"""
+    gateway = active_gateway_config(user_home)
+    base_url = normalize_gateway_base_url(gateway.get("base_url")) if gateway else None
+    api_key = gateway.get("api_key") if gateway else None
+    sessions = active_claude_code_sessions(user_home)
+    seen_cwds: set[Path] = set()
+    checked_files = 0
+    issues: list[str] = []
+    for session in sessions:
+        data = session.get("data")
+        if not isinstance(data, dict):
+            continue
+        cwd_raw = data.get("cwd") or data.get("originCwd")
+        if not isinstance(cwd_raw, str) or not cwd_raw:
+            continue
+        cwd = Path(cwd_raw).expanduser()
+        if cwd in seen_cwds:
+            continue
+        seen_cwds.add(cwd)
+        if not cwd.exists() or not cwd.is_dir():
+            continue
+        for path in collect_project_env_candidates(cwd):
+            checked_files += 1
+            values = project_env_values_from_file(path)
+            if "__unreadable__" in values:
+                issues.append(f"{path}:unreadable")
+                continue
+            if not values:
+                continue
+            rel = str(path)
+            current_base = normalize_gateway_base_url(values.get("ANTHROPIC_BASE_URL"))
+            if current_base and base_url and current_base != base_url:
+                issues.append(f"{rel}:ANTHROPIC_BASE_URL_mismatch")
+            for token_key in ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"]:
+                token = values.get(token_key)
+                if isinstance(api_key, str) and isinstance(token, str) and token.strip():
+                    if token.strip() != api_key.strip():
+                        issues.append(f"{rel}:{token_key}_mismatch")
+            custom_headers = values.get("ANTHROPIC_CUSTOM_HEADERS")
+            if isinstance(custom_headers, str) and re.search(
+                r"authorization|x-api-key|api[-_]?key", custom_headers, re.IGNORECASE
+            ):
+                issues.append(f"{rel}:ANTHROPIC_CUSTOM_HEADERS_auth_present")
+    if issues:
+        return (
+            "missing",
+            f"sessions={len(sessions)}; cwd_checked={len(seen_cwds)}; files_checked={checked_files}; issues="
+            + ",".join(issues[:8]),
+            len(issues),
+        )
+    return (
+        "passed",
+        f"sessions={len(sessions)}; cwd_checked={len(seen_cwds)}; files_checked={checked_files}; issues=0",
+        0,
+    )
 
 
 def shrink_session_value(value: Any, stats: dict[str, int]) -> Any:
@@ -3544,6 +3730,13 @@ def check_runtime_invariants(user_home: Path, report: PatchReport, *, require: b
         gateway_message,
         required=False,
     )
+    messages_status, messages_message = gateway_messages_auth_probe(user_home, preferred_model)
+    report.add(
+        "runtime.gateway_messages_auth_check",
+        messages_status,
+        messages_message,
+        required=False,
+    )
     report.add(
         "runtime.provider_default_ignores_opus_alias",
         "passed" if preferred_model and not is_opus_display_alias(preferred_model) else "missing",
@@ -3559,6 +3752,14 @@ def check_runtime_invariants(user_home: Path, report: PatchReport, *, require: b
         "runtime.claude_code_gateway_env",
         code_env_status,
         code_env_message,
+        required=False,
+    )
+    project_env_status, project_env_message, project_env_count = project_env_override_status(user_home)
+    report.add(
+        "runtime.active_project_env_overrides",
+        project_env_status,
+        project_env_message,
+        count=project_env_count,
         required=False,
     )
     report.add(
@@ -3781,6 +3982,8 @@ def repair_code_runtime(args: argparse.Namespace) -> int:
     )
     gateway_status, gateway_message = gateway_probe_message(model_metadata)
     report.add("runtime.gateway_auth_check", gateway_status, gateway_message, required=False)
+    messages_status, messages_message = gateway_messages_auth_probe(args.user_home, preferred_model)
+    report.add("runtime.gateway_messages_auth_check", messages_status, messages_message, required=False)
     code_env_changed, code_env_status, code_env_message = sync_claude_code_gateway_env(args.user_home)
     report.add(
         "runtime.claude_code_gateway_env",
