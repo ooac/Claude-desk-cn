@@ -30,6 +30,7 @@ import struct
 import sys
 import tempfile
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -2470,18 +2471,36 @@ def set_user_locale(user_home: Path) -> None:
 
 def gateway_config_candidates(user_home: Path) -> list[dict[str, Any]]:
     """读取第三方推理配置；返回值禁止写入密钥到日志。"""
-    roots = [
-        user_home / "Library/Application Support/Claude-3p/configLibrary",
-        user_home / "Library/Application Support/Claude-3p",
-    ]
+    config_library = user_home / "Library/Application Support/Claude-3p/configLibrary"
+    support_dir = user_home / "Library/Application Support/Claude-3p"
     files: list[Path] = []
-    for root in roots:
-        if not root.exists():
-            continue
-        if root.is_file():
-            files.append(root)
-            continue
-        files.extend(sorted(root.glob("*.json")))
+    if config_library.exists():
+        applied_id = None
+        meta_path = config_library / "_meta.json"
+        if meta_path.exists():
+            try:
+                meta = load_json(meta_path)
+                if isinstance(meta, dict) and isinstance(meta.get("appliedId"), str):
+                    applied_id = meta["appliedId"]
+            except Exception:
+                applied_id = None
+        if applied_id:
+            applied_path = config_library / f"{applied_id}.json"
+            if applied_path.exists():
+                files.append(applied_path)
+        files.extend(
+            path
+            for path in sorted(config_library.glob("*.json"))
+            if path.name != "_meta.json"
+            and ".before-" not in path.name
+            and path not in files
+        )
+    if support_dir.exists():
+        files.extend(
+            path
+            for path in sorted(support_dir.glob("*.json"))
+            if path.name != "_meta.json" and ".before-" not in path.name and path not in files
+        )
 
     configs: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
@@ -2494,13 +2513,25 @@ def gateway_config_candidates(user_home: Path) -> list[dict[str, Any]]:
             continue
         base_url = data.get("inferenceGatewayBaseUrl") or data.get("gatewayBaseUrl")
         api_key = data.get("inferenceGatewayApiKey") or data.get("gatewayApiKey")
+        auth_scheme = data.get("inferenceGatewayAuthScheme") or data.get("gatewayAuthScheme")
+        credential_helper = data.get("inferenceCredentialHelper") or data.get("gatewayCredentialHelper")
+        extra_headers = data.get("inferenceGatewayExtraHeaders") or data.get("gatewayExtraHeaders")
         if not isinstance(base_url, str) or not base_url:
             continue
         key = (base_url.rstrip("/"), str(path))
         if key in seen:
             continue
         seen.add(key)
-        configs.append({"path": path, "base_url": base_url, "api_key": api_key})
+        configs.append(
+            {
+                "path": path,
+                "base_url": base_url,
+                "api_key": api_key,
+                "auth_scheme": auth_scheme,
+                "credential_helper": credential_helper,
+                "extra_headers": extra_headers,
+            }
+        )
     return configs
 
 
@@ -2563,11 +2594,24 @@ def configured_model_list(user_home: Path) -> list[str]:
     return models
 
 
-def fetch_gateway_models(user_home: Path, timeout: float = 5.0) -> list[dict[str, Any]]:
-    """从当前第三方网关读取模型能力；失败时静默回退到本地配置。"""
+def safe_gateway_endpoint_for_log(base_url: str) -> str:
+    """日志里只记录网关地址，不记录密钥、查询参数或请求内容。"""
+    try:
+        parsed = urllib.parse.urlsplit(base_url)
+    except Exception:
+        return "<invalid-url>"
+    if not parsed.scheme or not parsed.netloc:
+        return "<invalid-url>"
+    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path.rstrip("/"), "", ""))
+
+
+def gateway_model_probe(user_home: Path, timeout: float = 5.0) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    """从当前第三方网关读取模型能力；失败原因进入诊断日志但不包含密钥。"""
+    errors: list[dict[str, str]] = []
     for config in gateway_config_candidates(user_home):
         base_url = str(config["base_url"]).rstrip("/")
         url = base_url + "/v1/models"
+        endpoint = safe_gateway_endpoint_for_log(base_url)
         request = urllib.request.Request(url, headers={"Accept": "application/json"})
         api_key = config.get("api_key")
         if isinstance(api_key, str) and api_key:
@@ -2575,15 +2619,36 @@ def fetch_gateway_models(user_home: Path, timeout: float = 5.0) -> list[dict[str
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:
                 payload = json.loads(response.read().decode("utf-8", errors="replace"))
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError):
+        except urllib.error.HTTPError as exc:
+            errors.append({"endpoint": endpoint, "status": str(exc.code), "reason": str(exc.reason)})
+            continue
+        except urllib.error.URLError as exc:
+            errors.append({"endpoint": endpoint, "status": "url_error", "reason": str(exc.reason)})
+            continue
+        except TimeoutError:
+            errors.append({"endpoint": endpoint, "status": "timeout", "reason": "timeout"})
+            continue
+        except json.JSONDecodeError:
+            errors.append({"endpoint": endpoint, "status": "invalid_json", "reason": "invalid_json"})
+            continue
+        except OSError as exc:
+            errors.append({"endpoint": endpoint, "status": "os_error", "reason": exc.__class__.__name__})
             continue
         raw_models = payload.get("data") if isinstance(payload, dict) else payload
         if not isinstance(raw_models, list):
+            errors.append({"endpoint": endpoint, "status": "invalid_schema", "reason": "missing_data_array"})
             continue
         models = [item for item in raw_models if isinstance(item, dict)]
         if models:
-            return models
-    return []
+            return models, errors
+        errors.append({"endpoint": endpoint, "status": "empty_models", "reason": "empty_data_array"})
+    return [], errors
+
+
+def fetch_gateway_models(user_home: Path, timeout: float = 5.0) -> list[dict[str, Any]]:
+    """从当前第三方网关读取模型能力；兼容旧调用，仅返回模型列表。"""
+    models, _errors = gateway_model_probe(user_home, timeout=timeout)
+    return models
 
 
 def model_id_from_gateway_model(model: dict[str, Any]) -> str | None:
@@ -2673,7 +2738,7 @@ def preferred_gateway_model_id(user_home: Path) -> tuple[str | None, dict[str, A
     configured_all = configured_model_list(user_home)
     ignored_opus_aliases = [model for model in configured_all if is_opus_display_alias(model)]
     configured = [model for model in configured_all if not is_opus_display_alias(model)]
-    gateway_models = fetch_gateway_models(user_home)
+    gateway_models, gateway_errors = gateway_model_probe(user_home)
     if configured:
         metadata: dict[str, Any] = {
             "source": "configured_model_list",
@@ -2681,6 +2746,7 @@ def preferred_gateway_model_id(user_home: Path) -> tuple[str | None, dict[str, A
             "configured_model_count": len(configured_all),
             "gateway_model_count": len(gateway_models),
             "ignored_opus_alias_count": len(ignored_opus_aliases),
+            "gateway_probe_errors": gateway_errors,
         }
         context_window, context_source = context_window_from_gateway_models(
             gateway_models,
@@ -2703,6 +2769,7 @@ def preferred_gateway_model_id(user_home: Path) -> tuple[str | None, dict[str, A
                 "model_count": len(gateway_models),
                 "configured_model_count": len(configured_all),
                 "ignored_opus_alias_count": len(ignored_opus_aliases),
+                "gateway_probe_errors": gateway_errors,
             }
             if context_window:
                 metadata["context_window"] = context_window
@@ -2713,6 +2780,7 @@ def preferred_gateway_model_id(user_home: Path) -> tuple[str | None, dict[str, A
         "model_count": 0,
         "configured_model_count": len(configured_all),
         "ignored_opus_alias_count": len(ignored_opus_aliases),
+        "gateway_probe_errors": gateway_errors,
     }
 
 
@@ -2725,6 +2793,124 @@ def context_window_from_metadata(metadata: dict[str, Any]) -> int | None:
         if parsed:
             return parsed
     return None
+
+
+def gateway_probe_message(metadata: dict[str, Any]) -> tuple[str, str]:
+    errors = metadata.get("gateway_probe_errors")
+    if not isinstance(errors, list) or not errors:
+        return "passed", "models_discovered_or_no_probe_error"
+    first = errors[0] if isinstance(errors[0], dict) else {}
+    status = str(first.get("status") or "unknown")
+    endpoint = str(first.get("endpoint") or "unknown")
+    reason = str(first.get("reason") or "")
+    return "missing", f"status={status}; endpoint={endpoint}; reason={reason}; api_key_not_logged=true"
+
+
+def normalize_gateway_base_url(base_url: Any) -> str | None:
+    if not isinstance(base_url, str) or not base_url.strip():
+        return None
+    stripped = base_url.strip()
+    return stripped.rstrip("/") + "/"
+
+
+def active_gateway_config(user_home: Path) -> dict[str, Any] | None:
+    configs = gateway_config_candidates(user_home)
+    return configs[0] if configs else None
+
+
+def claude_code_gateway_env_status(user_home: Path) -> tuple[str, str]:
+    """检查 Claude Code CLI 运行时 env 是否和当前第三方推理配置一致，不记录密钥。"""
+    gateway = active_gateway_config(user_home)
+    if not gateway:
+        return "missing", "gateway_config=missing"
+    base_url = normalize_gateway_base_url(gateway.get("base_url"))
+    api_key = gateway.get("api_key")
+    settings = user_home / ".claude/settings.json"
+    if not settings.exists():
+        return "missing", f"settings=missing; gateway={safe_gateway_endpoint_for_log(str(gateway.get('base_url') or ''))}"
+    try:
+        data = load_json(settings)
+    except Exception:
+        return "missing", "settings=unreadable"
+    env = data.get("env") if isinstance(data, dict) else None
+    if not isinstance(env, dict):
+        return "missing", "env=missing"
+    current_base = normalize_gateway_base_url(env.get("ANTHROPIC_BASE_URL"))
+    token = env.get("ANTHROPIC_AUTH_TOKEN")
+    base_match = bool(base_url and current_base == base_url)
+    token_present = isinstance(token, str) and bool(token.strip())
+    token_match = isinstance(api_key, str) and isinstance(token, str) and token.strip() == api_key.strip()
+    helper = gateway.get("credential_helper")
+    helper_configured = isinstance(helper, str) and bool(helper.strip())
+    if base_match and (token_match or helper_configured):
+        return (
+            "passed",
+            (
+                f"base_url_match=true; auth_token_present={str(token_present).lower()}; "
+                f"auth_token_matches_gateway={str(token_match).lower()}; helper_configured={str(helper_configured).lower()}"
+            ),
+        )
+    return (
+        "missing",
+        (
+            f"base_url_match={str(base_match).lower()}; auth_token_present={str(token_present).lower()}; "
+            f"auth_token_matches_gateway={str(token_match).lower()}; helper_configured={str(helper_configured).lower()}"
+        ),
+    )
+
+
+def sync_claude_code_gateway_env(user_home: Path) -> tuple[bool, str, str]:
+    """把第三方推理网关同步到 Claude Code CLI settings.env，解决 Cowork 可用但 Code 401。"""
+    gateway = active_gateway_config(user_home)
+    if not gateway:
+        return False, "missing", "gateway_config=missing"
+    base_url = normalize_gateway_base_url(gateway.get("base_url"))
+    api_key = gateway.get("api_key")
+    helper = gateway.get("credential_helper")
+    if not base_url:
+        return False, "missing", "gateway_base_url=missing"
+    if not isinstance(api_key, str) or not api_key.strip():
+        if isinstance(helper, str) and helper.strip():
+            return False, "missing", "static_api_key=missing; credential_helper_configured=true; manual_helper_sync_required=true"
+        return False, "missing", "static_api_key=missing"
+
+    settings = user_home / ".claude/settings.json"
+    data: dict[str, Any]
+    if settings.exists():
+        try:
+            loaded = load_json(settings)
+            data = loaded if isinstance(loaded, dict) else {}
+        except Exception as exc:
+            return False, "missing", f"settings=unreadable; error={exc.__class__.__name__}"
+    else:
+        data = {}
+    env = data.get("env")
+    if not isinstance(env, dict):
+        env = {}
+        data["env"] = env
+
+    changed = False
+    desired = {
+        "ANTHROPIC_BASE_URL": base_url,
+        "ANTHROPIC_AUTH_TOKEN": api_key.strip(),
+        "CLAUDE_CODE_DISABLE_TERMINAL_TITLE": "1",
+        "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
+        "CLAUDE_CODE_ATTRIBUTION_HEADER": "0",
+    }
+    for key, value in desired.items():
+        if env.get(key) != value:
+            env[key] = value
+            changed = True
+
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    if changed or not settings.exists():
+        save_json(settings, data)
+        sudo_uid = os.environ.get("SUDO_UID")
+        sudo_gid = os.environ.get("SUDO_GID")
+        if sudo_uid and sudo_gid:
+            os.chown(settings, int(sudo_uid), int(sudo_gid))
+    status, message = claude_code_gateway_env_status(user_home)
+    return changed, status, message
 
 
 def read_claude_code_context_window(user_home: Path) -> tuple[int | None, str]:
@@ -3345,6 +3531,13 @@ def check_runtime_invariants(user_home: Path, report: PatchReport, *, require: b
         count=int(model_metadata.get("model_count", 0) or 0),
         required=False,
     )
+    gateway_status, gateway_message = gateway_probe_message(model_metadata)
+    report.add(
+        "runtime.gateway_auth_check",
+        gateway_status,
+        gateway_message,
+        required=False,
+    )
     report.add(
         "runtime.provider_default_ignores_opus_alias",
         "passed" if preferred_model and not is_opus_display_alias(preferred_model) else "missing",
@@ -3353,6 +3546,13 @@ def check_runtime_invariants(user_home: Path, report: PatchReport, *, require: b
             f"ignored_opus_alias_count={model_metadata.get('ignored_opus_alias_count', 0)}; "
             f"configured_model_count={model_metadata.get('configured_model_count', 0)}"
         ),
+        required=False,
+    )
+    code_env_status, code_env_message = claude_code_gateway_env_status(user_home)
+    report.add(
+        "runtime.claude_code_gateway_env",
+        code_env_status,
+        code_env_message,
         required=False,
     )
     report.add(
@@ -3548,12 +3748,93 @@ def verify(app: Path) -> None:
             print(line)
 
 
+def repair_code_runtime(args: argparse.Namespace) -> int:
+    report = PatchReport(str(args.app), get_claude_version(args.app), "repair-code-runtime")
+    if args.dry_run:
+        print("[dry-run] Claude will not be quit and user config will not be changed.")
+        check_runtime_invariants(args.user_home, report, require=False)
+        write_patch_report(report)
+        print_report_summary(report)
+        return 0
+
+    quit_claude()
+    terminated = terminate_claude_code_children(args.user_home, args.dry_run)
+    report.add(
+        "runtime.claude_code_children_terminated",
+        "applied" if terminated else "passed",
+        f"terminated={terminated}",
+        required=False,
+    )
+    preferred_model, model_metadata = set_claude_code_dynamic_defaults(args.user_home)
+    report.add(
+        "runtime.provider_default_model",
+        "passed" if preferred_model else "missing",
+        f"model={preferred_model or 'unavailable'}; source={model_metadata.get('source')}",
+        count=int(model_metadata.get("model_count", 0) or 0),
+        required=False,
+    )
+    gateway_status, gateway_message = gateway_probe_message(model_metadata)
+    report.add("runtime.gateway_auth_check", gateway_status, gateway_message, required=False)
+    code_env_changed, code_env_status, code_env_message = sync_claude_code_gateway_env(args.user_home)
+    report.add(
+        "runtime.claude_code_gateway_env",
+        "applied" if code_env_changed else code_env_status,
+        code_env_message,
+        required=False,
+    )
+    provider_context_window = context_window_from_metadata(model_metadata)
+    runtime_context_window, runtime_context_source, context_changed = sync_claude_code_context_window(
+        args.user_home, provider_context_window
+    )
+    report.add(
+        "runtime.provider_context_window",
+        "passed" if provider_context_window else "missing",
+        f"context_window={provider_context_window or 'unavailable'}; source={model_metadata.get('context_source') or model_metadata.get('source')}",
+        required=False,
+    )
+    report.add(
+        "runtime.claude_code_context_window",
+        "applied" if context_changed else ("passed" if runtime_context_window else "missing"),
+        f"context_window={runtime_context_window or 'unavailable'}; source={runtime_context_source}",
+        required=False,
+    )
+    report.add(
+        "runtime.context_window_match",
+        "passed"
+        if provider_context_window
+        and runtime_context_window == provider_context_window
+        and runtime_context_source.startswith("root_")
+        else "missing",
+        f"provider={provider_context_window or 'unavailable'}; runtime={runtime_context_window or 'unavailable'}; source={runtime_context_source}",
+        required=False,
+    )
+    migrated_sessions = migrate_saved_session_dynamic_model(args.user_home, preferred_model)
+    report.add(
+        "runtime.saved_session_dynamic_model",
+        "applied" if migrated_sessions else "passed",
+        f"migrated={migrated_sessions}",
+        required=False,
+    )
+    sanitized_sessions, sanitize_details = sanitize_active_oversized_sessions(args.user_home)
+    report.add(
+        "runtime.oversized_session_sanitize",
+        "applied" if sanitized_sessions else "passed",
+        f"sanitized={sanitized_sessions}; checked={len(sanitize_details)}",
+        required=False,
+    )
+    check_runtime_invariants(args.user_home, report, require=False)
+    write_patch_report(report)
+    print_report_summary(report)
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Patch Claude Desktop with zh-CN language resources.")
     parser.add_argument("--app", type=Path, default=APP_DEFAULT, help="Path to Claude.app")
     parser.add_argument("--user-home", type=Path, default=Path.home(), help="Home directory whose Claude config should be updated")
     parser.add_argument("--dry-run", action="store_true", help="Prepare and verify a patched temp app, but do not replace /Applications/Claude.app")
     parser.add_argument("--diagnose", action="store_true", help="Only inspect the current Claude.app patch status and write a diagnostic report")
+    parser.add_argument("--repair-code-runtime", action="store_true", help="Repair Claude Code user runtime settings from the active third-party inference config")
     parser.add_argument("--prepare-official-update", action="store_true", help="Prepare the patched Claude.app so Finder can overwrite it from the official DMG")
     parser.add_argument("--launch", action="store_true", help="Launch Claude after installation")
     args = parser.parse_args()
@@ -3568,6 +3849,9 @@ def main() -> int:
         write_patch_report(report)
         print_report_summary(report)
         return 1 if report.has_required_failures() else 0
+
+    if args.repair_code_runtime:
+        return repair_code_runtime(args)
 
     if args.prepare_official_update:
         report = PatchReport(str(args.app), get_claude_version(args.app), "prepare-official-update")
@@ -3649,6 +3933,13 @@ def main() -> int:
             count=int(model_metadata.get("model_count", 0) or 0),
             required=False,
         )
+        gateway_status, gateway_message = gateway_probe_message(model_metadata)
+        report.add(
+            "runtime.gateway_auth_check",
+            gateway_status,
+            gateway_message,
+            required=False,
+        )
         report.add(
             "runtime.provider_default_ignores_opus_alias",
             "passed" if preferred_model and not is_opus_display_alias(preferred_model) else "missing",
@@ -3657,6 +3948,13 @@ def main() -> int:
                 f"ignored_opus_alias_count={model_metadata.get('ignored_opus_alias_count', 0)}; "
                 f"configured_model_count={model_metadata.get('configured_model_count', 0)}"
             ),
+            required=False,
+        )
+        code_env_changed, code_env_status, code_env_message = sync_claude_code_gateway_env(args.user_home)
+        report.add(
+            "runtime.claude_code_gateway_env",
+            "applied" if code_env_changed else code_env_status,
+            code_env_message,
             required=False,
         )
         provider_context_window = context_window_from_metadata(model_metadata)
