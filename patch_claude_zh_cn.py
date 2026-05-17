@@ -2818,6 +2818,49 @@ def gateway_probe_message(metadata: dict[str, Any]) -> tuple[str, str]:
     return "missing", f"status={status}; endpoint={endpoint}; reason={reason}; api_key_not_logged=true"
 
 
+def normalize_gateway_auth_scheme(config: dict[str, Any] | None) -> str:
+    """归一化第三方推理认证方案；默认按 Bearer 处理，直连 Anthropic 默认 x-api-key。"""
+    if not config:
+        return "bearer"
+    raw = config.get("auth_scheme")
+    scheme = str(raw or "").strip().lower().replace("_", "-")
+    if scheme in {"x-api-key", "x-api", "api-key", "apikey"}:
+        return "x-api-key"
+    if scheme in {"sso", "oauth", "oauth2"}:
+        return "sso"
+    if scheme in {"bearer", "authorization", "auth-bearer"}:
+        return "bearer"
+    base_url = str(config.get("base_url") or "")
+    try:
+        host = urllib.parse.urlparse(base_url).hostname or ""
+    except Exception:
+        host = ""
+    if host.endswith("anthropic.com"):
+        return "x-api-key"
+    return "bearer"
+
+
+def gateway_credential_mode(config: dict[str, Any] | None) -> str:
+    if not config:
+        return "missing"
+    if normalize_gateway_auth_scheme(config) == "sso":
+        return "sso"
+    helper = config.get("credential_helper")
+    if isinstance(helper, str) and helper.strip():
+        return "credential_helper"
+    api_key = config.get("api_key")
+    if isinstance(api_key, str) and api_key.strip():
+        return "static_key"
+    return "missing_static_key"
+
+
+def gateway_auth_headers(config: dict[str, Any], api_key: str) -> dict[str, str]:
+    scheme = normalize_gateway_auth_scheme(config)
+    if scheme == "x-api-key":
+        return {"x-api-key": api_key}
+    return {"Authorization": f"Bearer {api_key}"}
+
+
 def gateway_messages_auth_probe(user_home: Path, model: str | None, timeout: float = 8.0) -> tuple[str, str]:
     """用极小 /v1/messages 请求验证消息接口鉴权；不记录密钥和请求内容。"""
     if not model:
@@ -2828,10 +2871,23 @@ def gateway_messages_auth_probe(user_home: Path, model: str | None, timeout: flo
     base_url = str(config.get("base_url") or "").rstrip("/")
     endpoint = safe_gateway_endpoint_for_log(base_url)
     api_key = config.get("api_key")
+    auth_scheme = normalize_gateway_auth_scheme(config)
+    credential_mode = gateway_credential_mode(config)
     if not base_url:
         return "missing", "gateway_base_url=missing"
+    if credential_mode in {"sso", "credential_helper"}:
+        return (
+            "missing",
+            (
+                f"endpoint={endpoint}; auth_scheme={auth_scheme}; credential_mode={credential_mode}; "
+                "static_probe_supported=false; api_key_not_logged=true"
+            ),
+        )
     if not isinstance(api_key, str) or not api_key.strip():
-        return "missing", f"endpoint={endpoint}; static_api_key=missing"
+        return (
+            "missing",
+            f"endpoint={endpoint}; auth_scheme={auth_scheme}; credential_mode={credential_mode}; static_api_key=missing",
+        )
     payload = json.dumps(
         {
             "model": model,
@@ -2845,8 +2901,8 @@ def gateway_messages_auth_probe(user_home: Path, model: str | None, timeout: flo
         headers={
             "Accept": "application/json",
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key.strip()}",
             "anthropic-version": "2023-06-01",
+            **gateway_auth_headers(config, api_key.strip()),
         },
         method="POST",
     )
@@ -2854,19 +2910,43 @@ def gateway_messages_auth_probe(user_home: Path, model: str | None, timeout: flo
         with urllib.request.urlopen(request, timeout=timeout) as response:
             status = response.getcode()
             response.read(1024)
-        return "passed", f"status={status}; endpoint={endpoint}; model={model}; api_key_not_logged=true"
+        return (
+            "passed",
+            (
+                f"status={status}; endpoint={endpoint}; model={model}; auth_scheme={auth_scheme}; "
+                f"credential_mode={credential_mode}; api_key_not_logged=true"
+            ),
+        )
     except urllib.error.HTTPError as exc:
         auth_failed = exc.code in {401, 403}
         return (
             "missing" if auth_failed else "passed",
-            f"status={exc.code}; endpoint={endpoint}; model={model}; reason={exc.reason}; api_key_not_logged=true",
+            (
+                f"status={exc.code}; endpoint={endpoint}; model={model}; auth_scheme={auth_scheme}; "
+                f"credential_mode={credential_mode}; reason={exc.reason}; api_key_not_logged=true"
+            ),
         )
     except urllib.error.URLError as exc:
-        return "missing", f"status=url_error; endpoint={endpoint}; reason={exc.reason}; api_key_not_logged=true"
+        return (
+            "missing",
+            (
+                f"status=url_error; endpoint={endpoint}; auth_scheme={auth_scheme}; "
+                f"credential_mode={credential_mode}; reason={exc.reason}; api_key_not_logged=true"
+            ),
+        )
     except TimeoutError:
-        return "missing", f"status=timeout; endpoint={endpoint}; api_key_not_logged=true"
+        return (
+            "missing",
+            f"status=timeout; endpoint={endpoint}; auth_scheme={auth_scheme}; credential_mode={credential_mode}; api_key_not_logged=true",
+        )
     except OSError as exc:
-        return "missing", f"status=os_error; endpoint={endpoint}; reason={exc.__class__.__name__}; api_key_not_logged=true"
+        return (
+            "missing",
+            (
+                f"status=os_error; endpoint={endpoint}; auth_scheme={auth_scheme}; "
+                f"credential_mode={credential_mode}; reason={exc.__class__.__name__}; api_key_not_logged=true"
+            ),
+        )
 
 
 def normalize_gateway_base_url(base_url: Any) -> str | None:
@@ -2888,6 +2968,8 @@ def claude_code_gateway_env_status(user_home: Path) -> tuple[str, str]:
         return "missing", "gateway_config=missing"
     base_url = normalize_gateway_base_url(gateway.get("base_url"))
     api_key = gateway.get("api_key")
+    auth_scheme = normalize_gateway_auth_scheme(gateway)
+    credential_mode = gateway_credential_mode(gateway)
     settings = user_home / ".claude/settings.json"
     if not settings.exists():
         return "missing", f"settings=missing; gateway={safe_gateway_endpoint_for_log(str(gateway.get('base_url') or ''))}"
@@ -2910,11 +2992,21 @@ def claude_code_gateway_env_status(user_home: Path) -> tuple[str, str]:
     )
     helper = gateway.get("credential_helper")
     helper_configured = isinstance(helper, str) and bool(helper.strip())
+    if credential_mode in {"sso", "credential_helper"}:
+        return (
+            "missing",
+            (
+                f"base_url_match={str(base_match).lower()}; auth_scheme={auth_scheme}; "
+                f"credential_mode={credential_mode}; static_sync_supported=false; "
+                f"helper_configured={str(helper_configured).lower()}"
+            ),
+        )
     if base_match and ((token_match and api_key_match) or helper_configured):
         return (
             "passed",
             (
-                f"base_url_match=true; auth_token_present={str(token_present).lower()}; "
+                f"base_url_match=true; auth_scheme={auth_scheme}; credential_mode={credential_mode}; "
+                f"auth_token_present={str(token_present).lower()}; "
                 f"auth_token_matches_gateway={str(token_match).lower()}; "
                 f"api_key_present={str(api_key_present).lower()}; api_key_matches_gateway={str(api_key_match).lower()}; "
                 f"helper_configured={str(helper_configured).lower()}"
@@ -2923,7 +3015,8 @@ def claude_code_gateway_env_status(user_home: Path) -> tuple[str, str]:
     return (
         "missing",
         (
-            f"base_url_match={str(base_match).lower()}; auth_token_present={str(token_present).lower()}; "
+            f"base_url_match={str(base_match).lower()}; auth_scheme={auth_scheme}; credential_mode={credential_mode}; "
+            f"auth_token_present={str(token_present).lower()}; "
             f"auth_token_matches_gateway={str(token_match).lower()}; "
             f"api_key_present={str(api_key_present).lower()}; api_key_matches_gateway={str(api_key_match).lower()}; "
             f"helper_configured={str(helper_configured).lower()}"
@@ -2938,12 +3031,16 @@ def sync_claude_code_gateway_env(user_home: Path) -> tuple[bool, str, str]:
         return False, "missing", "gateway_config=missing"
     base_url = normalize_gateway_base_url(gateway.get("base_url"))
     api_key = gateway.get("api_key")
-    helper = gateway.get("credential_helper")
+    credential_mode = gateway_credential_mode(gateway)
     if not base_url:
         return False, "missing", "gateway_base_url=missing"
+    if credential_mode in {"sso", "credential_helper"}:
+        return (
+            False,
+            "missing",
+            f"credential_mode={credential_mode}; static_sync_supported=false; manual_sync_required=true",
+        )
     if not isinstance(api_key, str) or not api_key.strip():
-        if isinstance(helper, str) and helper.strip():
-            return False, "missing", "static_api_key=missing; credential_helper_configured=true; manual_helper_sync_required=true"
         return False, "missing", "static_api_key=missing"
 
     settings = user_home / ".claude/settings.json"
@@ -3028,7 +3125,13 @@ def sync_claude_code_context_window(user_home: Path, context_window: int | None)
 
     config_path = user_home / ".claude.json"
     if not config_path.exists():
-        return None, "missing", False
+        save_json(config_path, {CLAUDE_CODE_CONTEXT_WINDOW_KEY: context_window})
+        sudo_uid = os.environ.get("SUDO_UID")
+        sudo_gid = os.environ.get("SUDO_GID")
+        if sudo_uid and sudo_gid:
+            os.chown(config_path, int(sudo_uid), int(sudo_gid))
+        print(f"Created Claude Code runtime JSON with context window: {context_window}")
+        return context_window, "root_created", True
     try:
         data = load_json(config_path)
     except Exception as exc:
@@ -3070,13 +3173,15 @@ def sync_claude_code_context_window(user_home: Path, context_window: int | None)
 def set_claude_code_dynamic_defaults(user_home: Path) -> tuple[str | None, dict[str, Any]]:
     """同步 Claude Code 默认值：模型跟随真实 provider，强度仍默认最大。"""
     settings = user_home / ".claude/settings.json"
-    if not settings.exists():
-        return None, {"source": "settings_missing"}
-    try:
-        data = load_json(settings)
-    except Exception as exc:
-        print(f"Warning: cannot update Claude Code settings JSON: {settings}: {exc}")
-        return None, {"source": "settings_unreadable"}
+    if settings.exists():
+        try:
+            loaded = load_json(settings)
+            data = loaded if isinstance(loaded, dict) else {}
+        except Exception as exc:
+            print(f"Warning: cannot update Claude Code settings JSON: {settings}: {exc}")
+            return None, {"source": "settings_unreadable"}
+    else:
+        data = {}
 
     preferred_model, metadata = preferred_gateway_model_id(user_home)
     changed = False
@@ -3086,10 +3191,11 @@ def set_claude_code_dynamic_defaults(user_home: Path) -> tuple[str | None, dict[
     if data.get("effortLevel") != "max":
         data["effortLevel"] = "max"
         changed = True
-    if not changed:
+    if not changed and settings.exists():
         print(f"Claude Code defaults already match provider/default effort: {settings}")
         return data.get("model"), metadata
 
+    settings.parent.mkdir(parents=True, exist_ok=True)
     save_json(settings, data)
     sudo_uid = os.environ.get("SUDO_UID")
     sudo_gid = os.environ.get("SUDO_GID")
@@ -3243,27 +3349,38 @@ def project_env_values_from_file(path: Path) -> dict[str, str]:
     return parse_env_assignments(path)
 
 
-def project_env_override_status(user_home: Path) -> tuple[str, str, int]:
+def project_env_override_status(user_home: Path, project_paths: list[Path] | None = None) -> tuple[str, str, int]:
     """检查未归档 Code 会话的项目目录是否用项目级配置覆盖了网关认证环境。"""
     gateway = active_gateway_config(user_home)
     base_url = normalize_gateway_base_url(gateway.get("base_url")) if gateway else None
     api_key = gateway.get("api_key") if gateway else None
-    sessions = active_claude_code_sessions(user_home)
+    explicit = bool(project_paths)
+    sessions = [] if explicit else active_claude_code_sessions(user_home)
+    cwd_candidates: list[Path] = []
+    if project_paths:
+        cwd_candidates = [Path(item).expanduser() for item in project_paths]
+    else:
+        for session in sessions:
+            data = session.get("data")
+            if not isinstance(data, dict):
+                continue
+            cwd_raw = data.get("cwd") or data.get("originCwd")
+            if isinstance(cwd_raw, str) and cwd_raw:
+                cwd_candidates.append(Path(cwd_raw).expanduser())
     seen_cwds: set[Path] = set()
     checked_files = 0
     issues: list[str] = []
-    for session in sessions:
-        data = session.get("data")
-        if not isinstance(data, dict):
-            continue
-        cwd_raw = data.get("cwd") or data.get("originCwd")
-        if not isinstance(cwd_raw, str) or not cwd_raw:
-            continue
-        cwd = Path(cwd_raw).expanduser()
+    for cwd in cwd_candidates:
+        try:
+            cwd = cwd.resolve()
+        except Exception:
+            pass
         if cwd in seen_cwds:
             continue
         seen_cwds.add(cwd)
         if not cwd.exists() or not cwd.is_dir():
+            if explicit:
+                issues.append(f"{cwd}:project_not_found")
             continue
         for path in collect_project_env_candidates(cwd):
             checked_files += 1
@@ -3290,13 +3407,15 @@ def project_env_override_status(user_home: Path) -> tuple[str, str, int]:
     if issues:
         return (
             "missing",
-            f"sessions={len(sessions)}; cwd_checked={len(seen_cwds)}; files_checked={checked_files}; issues="
+            f"source={'explicit' if explicit else 'active_sessions'}; sessions={len(sessions)}; "
+            f"cwd_checked={len(seen_cwds)}; files_checked={checked_files}; issues="
             + ",".join(issues[:8]),
             len(issues),
         )
     return (
         "passed",
-        f"sessions={len(sessions)}; cwd_checked={len(seen_cwds)}; files_checked={checked_files}; issues=0",
+        f"source={'explicit' if explicit else 'active_sessions'}; sessions={len(sessions)}; "
+        f"cwd_checked={len(seen_cwds)}; files_checked={checked_files}; issues=0",
         0,
     )
 
@@ -3711,7 +3830,13 @@ def check_frontend_invariants(app: Path, report: PatchReport, *, require: bool =
     return not report.has_required_failures()
 
 
-def check_runtime_invariants(user_home: Path, report: PatchReport, *, require: bool = False) -> None:
+def check_runtime_invariants(
+    user_home: Path,
+    report: PatchReport,
+    *,
+    require: bool = False,
+    project_paths: list[Path] | None = None,
+) -> None:
     """检查用户态运行数据；这里只记录风险，不阻断安装。"""
     preferred_model, model_metadata = preferred_gateway_model_id(user_home)
     provider_context_window = context_window_from_metadata(model_metadata)
@@ -3762,6 +3887,17 @@ def check_runtime_invariants(user_home: Path, report: PatchReport, *, require: b
         count=project_env_count,
         required=False,
     )
+    if project_paths:
+        explicit_env_status, explicit_env_message, explicit_env_count = project_env_override_status(
+            user_home, project_paths
+        )
+        report.add(
+            "runtime.project_env_overrides",
+            explicit_env_status,
+            explicit_env_message,
+            count=explicit_env_count,
+            required=False,
+        )
     report.add(
         "runtime.provider_context_window",
         "passed" if provider_context_window else "missing",
@@ -4043,6 +4179,13 @@ def main() -> int:
     parser.add_argument("--user-home", type=Path, default=Path.home(), help="Home directory whose Claude config should be updated")
     parser.add_argument("--dry-run", action="store_true", help="Prepare and verify a patched temp app, but do not replace /Applications/Claude.app")
     parser.add_argument("--diagnose", action="store_true", help="Only inspect the current Claude.app patch status and write a diagnostic report")
+    parser.add_argument(
+        "--project",
+        action="append",
+        type=Path,
+        default=[],
+        help="Project folder to inspect for Code-specific .claude/settings or .env gateway overrides during --diagnose",
+    )
     parser.add_argument("--repair-code-runtime", action="store_true", help="Repair Claude Code user runtime settings from the active third-party inference config")
     parser.add_argument("--prepare-official-update", action="store_true", help="Prepare the patched Claude.app so Finder can overwrite it from the official DMG")
     parser.add_argument("--launch", action="store_true", help="Launch Claude after installation")
@@ -4054,7 +4197,7 @@ def main() -> int:
     if args.diagnose:
         report = PatchReport(str(args.app), get_claude_version(args.app), "diagnose")
         check_frontend_invariants(args.app, report, require=True)
-        check_runtime_invariants(args.user_home, report, require=False)
+        check_runtime_invariants(args.user_home, report, require=False, project_paths=args.project)
         write_patch_report(report)
         print_report_summary(report)
         return 1 if report.has_required_failures() else 0
@@ -4147,6 +4290,13 @@ def main() -> int:
             "runtime.gateway_auth_check",
             gateway_status,
             gateway_message,
+            required=False,
+        )
+        messages_status, messages_message = gateway_messages_auth_probe(args.user_home, preferred_model)
+        report.add(
+            "runtime.gateway_messages_auth_check",
+            messages_status,
+            messages_message,
             required=False,
         )
         report.add(

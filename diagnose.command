@@ -13,6 +13,7 @@ echo "目录: $DIR"
 echo
 echo "这个脚本只检查当前 /Applications/Claude.app 和本机 Claude 配置。"
 echo "它不会安装补丁，不会替换 Claude.app，也不会修改 API、网关或模型配置。"
+echo "如果只想检查某个项目，可以把项目文件夹拖到这个脚本上运行。"
 echo
 
 USER_HOME="$HOME"
@@ -20,7 +21,14 @@ if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
   USER_HOME="/Users/$SUDO_USER"
 fi
 
-"$PYTHON" "$DIR/patch_claude_zh_cn.py" --diagnose --app /Applications/Claude.app --user-home "$USER_HOME" "$@"
+PROJECT_ARGS=()
+if [ "$#" -gt 0 ]; then
+  for project_path in "$@"; do
+    PROJECT_ARGS+=(--project "$project_path")
+  done
+fi
+
+"$PYTHON" "$DIR/patch_claude_zh_cn.py" --diagnose --app /Applications/Claude.app --user-home "$USER_HOME" "${PROJECT_ARGS[@]}"
 STATUS=$?
 
 echo
